@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-12
+
+### Added
+- 20 more cities and towns, for 27 in total:
+  - Peninsular: Taiping, Seremban, Alor Setar, Sungai Petani, Kangar, Kuantan, Kota Bharu, Kuala Terengganu
+  - Sabah: Sandakan, Tawau, Lahad Datu, Keningau
+  - Sarawak: Sri Aman, Sarikei, Sibu, Kapit, Bintulu, Miri, Limbang, Lawas
+- City picker grouped into Peninsular, Sabah and Sarawak, showing each city's own last update time.
+- `TOMTOM_DAILY_LIMIT` (default 2,400) stops TomTom calls for the rest of the day before the free quota runs out.
+
+### Changed
+- The city on screen refreshes every 5 minutes and every other city every 3 hours (`SLOW_POLL_MINUTES`), so 27 cities fit in the free TomTom quota. The page tells the server which city it shows.
+- Weather warnings for Sabah and Sarawak are matched by division and district: "Miri (Marudi)" doesn't cover Miri town; "Limbang" on its own covers Limbang and Lawas.
+
 ## [0.2.1] - 2026-10-12
 
 ### Fixed
@@ -42,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GET /api/state` JSON endpoint, version shown in the page footer.
 - Self-checks via `npm test`.
 
+[0.3.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.1.0

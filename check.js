@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { causeOf, parseRss, isTrafficNews, isPeakHour, relevantWarnings, warningCovers, validateAi, safePath, mentions, roadTokens, roadLabel, ALL_REGIONS } from './server.js';
+import { causeOf, parseRss, isTrafficNews, isPeakHour, relevantWarnings, warningCovers, dueRegions, validateAi, safePath, mentions, roadTokens, roadLabel, ALL_REGIONS } from './server.js';
 import { openHistory } from './history.js';
 
 const SUNDAY_NOON = new Date('2026-10-11T04:00:00Z'); // 12:00 MYT
@@ -71,14 +71,24 @@ const warnings = relevantWarnings([
   w('Thunderstorms Warning', 'Selangor', '2026-10-10T00:00:00', '2026-10-10T23:00:00'),
 ], SUNDAY_NOON);
 // "Johor (Segamat)" no longer counts for Johor Bahru: Segamat is a different district
-assert.deepEqual(warnings.map((x) => x.regions), [['klang-valley'], ['penang']]);
+// Kelantan on its own now covers Kota Bharu
+assert.deepEqual(warnings.map((x) => x.regions), [['klang-valley'], ['kota-bharu'], ['penang']]);
 
 // Real MET Malaysia text (12 Oct 2026): districts narrow a state down
 const real = 'Thunderstorms, heavy rain and strong winds are expected over the states of Perlis • Kedah (Sik, Baling, Kuala Muda) • '
   + 'Penang (Seberang Perai Utara, Seberang Perai Tengah and Seberang Perai Selatan) • Perak (Kerian, Larut Matang, Selama, Hulu Perak and Kuala Kangsar) • '
   + 'Johor (Johor Bahru, Kulai and Pontian) • Sabah: West Coast, Interior (Tambunan, Sipitang), Kudat until 4:00 PM; Monday, 12 October 2026.';
 const covered = ALL_REGIONS.filter((r) => warningCovers(real, r)).map((r) => r.id);
-assert.deepEqual(covered, ['penang', 'johor-bahru', 'kota-kinabalu']); // not Ipoh: Kinta isn't listed
+// Perlis on its own = whole state; Kedah (Kuala Muda) = Sungai Petani; Perak (Larut Matang) = Taiping, not Ipoh (Kinta);
+// Sabah: West Coast = KK, Interior (Tambunan, Sipitang) doesn't include Keningau
+assert.deepEqual(covered, ['penang', 'johor-bahru', 'taiping', 'sungai-petani', 'kangar', 'kota-kinabalu']);
+
+// Sarawak/Sabah name divisions; a division on its own covers every town in it, "Division (districts)" only those
+const sarawak = 'Thunderstorms over Sarawak: Bintulu (Tatau and Sebauh), Miri (Marudi and Bario), Sibu (Selangau and Sibu), Limbang, Mukah (Dalat and Matu) until 9:00 PM';
+assert.deepEqual(ALL_REGIONS.filter((r) => warningCovers(sarawak, r)).map((r) => r.id), ['sibu', 'limbang', 'lawas']);
+const sabah = 'Heavy rain over Sabah: West Coast, Interior (Tambunan and Keningau), Tawau (Lahad Datu) and Sandakan (Kinabatangan)';
+assert.deepEqual(ALL_REGIONS.filter((r) => warningCovers(sabah, r)).map((r) => r.id), ['kota-kinabalu', 'lahad-datu', 'keningau']);
+assert.ok(warningCovers('Continuous rain over Sarawak', ALL_REGIONS.find((r) => r.id === 'kapit'))); // whole state
 const kv = ALL_REGIONS[0];
 assert.ok(warningCovers('Thunderstorms over Selangor (Petaling, Gombak) • W.P. Kuala Lumpur', kv));
 assert.ok(warningCovers('Thunderstorms over W.P. Kuala Lumpur • W.P. Putrajaya', kv));
@@ -93,6 +103,16 @@ for (const r of ALL_REGIONS) {
   const km2 = (x2 - x1) * 111 * Math.cos(((y1 + y2) / 2) * Math.PI / 180) * (y2 - y1) * 111;
   assert.ok(x1 < x2 && y1 < y2 && km2 < 10000, r.id);
 }
+
+// Scheduler: watched cities every 5 min, others every 3 h, never-fetched ones right away
+const M = 60e3;
+const regs = ['a', 'b', 'c'].map((id) => ({ id }));
+const fetched = new Map([['a', 0], ['b', 0]]); // c never fetched
+const watched = new Map([['a', 6 * M]]); // a was looked at 1 min before "now"
+assert.deepEqual(dueRegions(regs, 7 * M, fetched, watched, 5 * M, 180 * M).map((r) => r.id), ['a', 'c']);
+// At 100 min nobody has looked at a for 94 min, so it is back on the 3 h schedule
+assert.deepEqual(dueRegions(regs, 100 * M, fetched, watched, 5 * M, 180 * M).map((r) => r.id), ['c']);
+assert.deepEqual(dueRegions(regs, 180 * M, fetched, watched, 5 * M, 180 * M).map((r) => r.id), ['a', 'b', 'c']);
 
 // History: per-poll snapshots + incidents upserted across polls
 const h = openHistory(':memory:');

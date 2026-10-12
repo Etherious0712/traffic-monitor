@@ -179,8 +179,13 @@ function render() {
   const s = state;
   if (!s.regions.some((r) => r.id === region)) region = s.regions[0].id;
   const counts = Object.fromEntries(s.regions.map((r) => [r.id, s.incidents.filter((i) => i.region === r.id).length]));
-  $('region').innerHTML = s.regions.map((r) => `<option value="${esc(r.id)}"${r.id === region ? ' selected' : ''}>${esc(r.name)}${s.traffic ? ` (${counts[r.id]})` : ''}</option>`).join('');
-  $('updated').textContent = s.updatedAt ? `Updated ${new Date(s.updatedAt).toLocaleTimeString()}` : 'Waiting for first update…';
+  const option = (r) => `<option value="${esc(r.id)}"${r.id === region ? ' selected' : ''}>${esc(r.name)}${s.traffic && r.updatedAt ? ` (${counts[r.id]})` : ''}</option>`;
+  $('region').innerHTML = [...new Set(s.regions.map((r) => r.group))]
+    .map((g) => `<optgroup label="${esc(g)}">${s.regions.filter((r) => r.group === g).map(option).join('')}</optgroup>`).join('');
+  // Cities nobody is watching refresh every few hours, so show this city's own time and say when it's catching up.
+  const at = regionInfo().updatedAt;
+  $('updated').textContent = !s.traffic ? '' : !at ? 'Loading this city…'
+    : Date.now() - Date.parse(at) > 6 * 60e3 ? `Updated ${new Date(at).toLocaleTimeString()} · refreshing…` : `Updated ${new Date(at).toLocaleTimeString()}`;
   $('ver').textContent = `v${s.version} · `;
   $('warnings').innerHTML = s.warnings.filter((w) => w.regions.includes(region))
     .map((w) => `⚠ ${esc(w.title)} (until ${esc(w.validTo.replace('T', ' ').slice(0, 16))})`).join('<br>');
@@ -381,8 +386,8 @@ async function loadHistory() {
     return;
   }
   if (want !== `${region}|${days}`) return; // user switched while loading
-  if (!h.series.length) {
-    out.innerHTML = '<p class="src">No history yet. It builds up while the app runs.</p>';
+  if (h.series.length < 2) {
+    out.innerHTML = '<p class="src">Not enough history yet. It builds up while the app runs (cities nobody is watching are recorded every 3 hours).</p>';
     return;
   }
   out.replaceChildren(lineChart(h.series), hourChart(h.byHour), ...(h.causes.length ? [causeBars(h.causes)] : []), ...(h.roads.length ? [roadList(h.roads)] : []));
@@ -395,6 +400,7 @@ $('region').addEventListener('change', (e) => {
   store.set('region', region);
   render();
   flyToRegion();
+  refreshSoon();
 });
 document.querySelector('.ranges').addEventListener('click', (e) => {
   const d = Number(e.target.dataset?.days);
@@ -418,15 +424,24 @@ function focusIncident(e) {
 async function refresh() {
   try {
     const first = !state;
-    state = await (await fetch('/api/state')).json();
+    // `watch` tells the server which city is on screen, so it refreshes that one every few minutes
+    state = await (await fetch(`/api/state${region ? `?watch=${encodeURIComponent(region)}` : ''}`)).json();
     render();
-    if (first) mapReady ? flyToRegion() : map.once('load', flyToRegion);
+    if (first) {
+      mapReady ? flyToRegion() : map.once('load', flyToRegion);
+      refreshSoon();
+    }
   } catch {
     $('updated').textContent = 'Server unreachable, retrying…';
   }
 }
 refresh();
 setInterval(refresh, 60e3);
+// After switching city (or first load) the server fetches it within ~30 s; check back then instead of waiting a minute.
+function refreshSoon() {
+  refresh();
+  setTimeout(refresh, 35e3);
+}
 </script>
 </body>
 </html>

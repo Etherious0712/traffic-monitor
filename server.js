@@ -14,23 +14,52 @@ const AI_ON = Boolean(env.AI_BASE_URL);
 const AI_MAX_CALLS_PER_DAY = Number(env.AI_MAX_CALLS_PER_DAY) || 200;
 const HISTORY_DAYS = Number(env.HISTORY_DAYS) || 90;
 const DAY = 864e5;
+const MIN = 60e3;
+// A city someone is looking at refreshes every POLL_MINUTES; the rest every SLOW_POLL_MINUTES.
+const FAST_MS = (Number(env.POLL_MINUTES) || 5) * MIN;
+const SLOW_MS = (Number(env.SLOW_POLL_MINUTES) || 180) * MIN;
+const WATCH_MS = 10 * MIN; // a city counts as watched for 10 min after a page last asked for it
+const TOMTOM_DAILY_LIMIT = Number(env.TOMTOM_DAILY_LIMIT) || 2400; // free tier is 2,500 incident calls a day
 
-// bbox = minLon,minLat,maxLon,maxLat (TomTom caps one at 10,000 km²).
-// `states` and `areas` match MET Malaysia warning text: a warning names a state, optionally narrowed to
-// districts or divisions ("Perak (Kerian, Hulu Perak)"); `areas` are the ones inside the bbox.
-// Each region costs one TomTom call per poll: all 7 at POLL_MINUTES=5 is ~2,000 of the 2,500 free calls a day.
+// bbox = minLon,minLat,maxLon,maxLat (TomTom caps one at 10,000 km²); `around` builds one from a town centre.
+// `states`, `districts` and `divisions` match MET Malaysia warning text (see warningCovers):
+// districts are the ones inside the bbox; divisions (Sabah/Sarawak only) are the ones the town belongs to.
+const around = (lat, lon, d = 0.15) => [lon - d, lat - d, lon + d, lat + d].map((n) => n.toFixed(3)).join(',');
+const SABAH = /Sabah/i;
+const SARAWAK = /Sarawak/i;
 export const ALL_REGIONS = [
-  { id: 'klang-valley', name: 'Klang Valley', bbox: '101.3,2.8,101.9,3.4', states: /Selangor|Kuala Lumpur|Putrajaya/i,
-    areas: /Petaling|Gombak|Hulu Langat|Klang|Sepang|Kuala Langat/i },
-  { id: 'penang', name: 'Penang', bbox: '100.15,5.2,100.6,5.6', states: /Penang|Pulau Pinang/i,
-    areas: /Timur Laut|Barat Daya|Seberang Perai/i },
-  { id: 'johor-bahru', name: 'Johor Bahru', bbox: '103.5,1.35,104.0,1.7', states: /Johor/i,
-    areas: /Johor Bahru|Kulai|Pasir Gudang|Iskandar Puteri/i },
-  { id: 'ipoh', name: 'Ipoh', bbox: '100.95,4.45,101.2,4.75', states: /Perak/i, areas: /Kinta|Ipoh/i },
-  { id: 'melaka', name: 'Melaka', bbox: '102.1,2.1,102.4,2.35', states: /Melaka|Malacca/i, areas: /Melaka Tengah|Alor Gajah/i },
-  { id: 'kuching', name: 'Kuching', bbox: '110.2,1.4,110.5,1.65', states: /Sarawak/i, areas: /Kuching|Samarahan/i },
-  { id: 'kota-kinabalu', name: 'Kota Kinabalu', bbox: '115.95,5.85,116.2,6.1', states: /Sabah/i,
-    areas: /West Coast|Kota Kinabalu|Penampang|Putatan/i },
+  { id: 'klang-valley', name: 'Klang Valley', group: 'Peninsular', bbox: '101.3,2.8,101.9,3.4', states: /Selangor|Kuala Lumpur|Putrajaya/i,
+    districts: ['Petaling', 'Gombak', 'Hulu Langat', 'Klang', 'Sepang', 'Kuala Langat'] },
+  { id: 'penang', name: 'Penang', group: 'Peninsular', bbox: '100.15,5.2,100.6,5.6', states: /Penang|Pulau Pinang/i,
+    districts: ['Timur Laut', 'Barat Daya', 'Seberang Perai Utara', 'Seberang Perai Tengah', 'Seberang Perai Selatan'] },
+  { id: 'johor-bahru', name: 'Johor Bahru', group: 'Peninsular', bbox: '103.5,1.35,104.0,1.7', states: /Johor/i, districts: ['Johor Bahru', 'Kulai'] },
+  { id: 'ipoh', name: 'Ipoh', group: 'Peninsular', bbox: '100.95,4.45,101.2,4.75', states: /Perak/i, districts: ['Kinta'] },
+  { id: 'taiping', name: 'Taiping', group: 'Peninsular', bbox: around(4.855, 100.744), states: /Perak/i, districts: ['Larut Matang', 'Larut', 'Matang'] },
+  { id: 'melaka', name: 'Melaka', group: 'Peninsular', bbox: '102.1,2.1,102.4,2.35', states: /Melaka|Malacca/i, districts: ['Melaka Tengah', 'Alor Gajah'] },
+  { id: 'seremban', name: 'Seremban', group: 'Peninsular', bbox: around(2.723, 101.940), states: /Negeri Sembilan|N\. Sembilan/i, districts: ['Seremban'] },
+  { id: 'alor-setar', name: 'Alor Setar', group: 'Peninsular', bbox: around(6.123, 100.368), states: /Kedah/i, districts: ['Kota Setar'] },
+  { id: 'sungai-petani', name: 'Sungai Petani', group: 'Peninsular', bbox: around(5.644, 100.487), states: /Kedah/i, districts: ['Kuala Muda'] },
+  { id: 'kangar', name: 'Kangar', group: 'Peninsular', bbox: around(6.439, 100.194), states: /Perlis/i, districts: ['Kangar'] },
+  { id: 'kuantan', name: 'Kuantan', group: 'Peninsular', bbox: around(3.797, 103.322), states: /Pahang/i, districts: ['Kuantan'] },
+  { id: 'kota-bharu', name: 'Kota Bharu', group: 'Peninsular', bbox: around(6.125, 102.238), states: /Kelantan/i, districts: ['Kota Bharu'] },
+  { id: 'kuala-terengganu', name: 'Kuala Terengganu', group: 'Peninsular', bbox: around(5.330, 103.138), states: /Terengganu/i,
+    districts: ['Kuala Terengganu', 'Kuala Nerus'] },
+  { id: 'kota-kinabalu', name: 'Kota Kinabalu', group: 'Sabah', bbox: '115.95,5.85,116.2,6.1', states: SABAH,
+    divisions: ['West Coast'], districts: ['Kota Kinabalu', 'Penampang', 'Putatan'] },
+  { id: 'sandakan', name: 'Sandakan', group: 'Sabah', bbox: around(5.839, 118.116), states: SABAH, divisions: ['Sandakan'], districts: ['Sandakan'] },
+  { id: 'tawau', name: 'Tawau', group: 'Sabah', bbox: around(4.244, 117.885), states: SABAH, divisions: ['Tawau'], districts: ['Tawau'] },
+  { id: 'lahad-datu', name: 'Lahad Datu', group: 'Sabah', bbox: around(5.022, 118.328), states: SABAH, divisions: ['Tawau'], districts: ['Lahad Datu'] },
+  { id: 'keningau', name: 'Keningau', group: 'Sabah', bbox: around(5.332, 116.152), states: SABAH, divisions: ['Interior'], districts: ['Keningau'] },
+  { id: 'kuching', name: 'Kuching', group: 'Sarawak', bbox: '110.2,1.4,110.5,1.65', states: SARAWAK,
+    divisions: ['Kuching', 'Samarahan'], districts: ['Kuching', 'Samarahan'] },
+  { id: 'sri-aman', name: 'Sri Aman', group: 'Sarawak', bbox: around(1.238, 111.462), states: SARAWAK, divisions: ['Sri Aman'], districts: ['Sri Aman'] },
+  { id: 'sarikei', name: 'Sarikei', group: 'Sarawak', bbox: around(2.129, 111.523), states: SARAWAK, divisions: ['Sarikei'], districts: ['Sarikei'] },
+  { id: 'sibu', name: 'Sibu', group: 'Sarawak', bbox: around(2.300, 111.871), states: SARAWAK, divisions: ['Sibu'], districts: ['Sibu'] },
+  { id: 'kapit', name: 'Kapit', group: 'Sarawak', bbox: around(2.014, 112.936), states: SARAWAK, divisions: ['Kapit'], districts: ['Kapit'] },
+  { id: 'bintulu', name: 'Bintulu', group: 'Sarawak', bbox: around(3.187, 113.047), states: SARAWAK, divisions: ['Bintulu'], districts: ['Bintulu'] },
+  { id: 'miri', name: 'Miri', group: 'Sarawak', bbox: around(4.394, 113.988), states: SARAWAK, divisions: ['Miri'], districts: ['Miri'] },
+  { id: 'limbang', name: 'Limbang', group: 'Sarawak', bbox: around(4.753, 115.009, 0.12), states: SARAWAK, divisions: ['Limbang'], districts: ['Limbang'] },
+  { id: 'lawas', name: 'Lawas', group: 'Sarawak', bbox: around(4.860, 115.408, 0.12), states: SARAWAK, divisions: ['Limbang'], districts: ['Lawas'] },
 ];
 const wanted = (env.REGIONS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const REGIONS = wanted.length ? ALL_REGIONS.filter((r) => wanted.includes(r.id)) : ALL_REGIONS;
@@ -127,11 +156,48 @@ export function isPeakHour(now) {
   return day >= 1 && day <= 5 && ((h >= 7 && h < 10) || (h >= 17 && h < 20));
 }
 
-// Warning text lists areas separated by "•": "Perlis • Perak (Kerian and Hulu Perak) • Sabah: West Coast, Kudat".
-// A state on its own covers the whole state; with districts/divisions it only covers the ones named.
+const list = (s) => s.split(/,|\band\b/).map((x) => x.trim()).filter(Boolean);
+const named = (names, wanted = []) => names.some((n) => wanted.some((w) => w.toLowerCase() === n.toLowerCase()));
+
+// Split on commas and " and " that are outside brackets: "West Coast, Tawau (Lahad Datu and Kunak)".
+function splitTop(s) {
+  const out = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') depth--;
+    else if (depth === 0 && (s[i] === ',' || s.startsWith(' and ', i))) {
+      out.push(s.slice(start, i));
+      start = i + (s[i] === ',' ? 1 : 5);
+      i = start - 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out.map((p) => p.trim()).filter(Boolean);
+}
+
+// Warning text lists areas separated by "•", and anything after "until" is the expiry time:
+//   "Perlis • Perak (Kerian and Hulu Perak) • Sabah: West Coast, Tawau (Lahad Datu) • Sarawak: Miri (Marudi), Limbang"
+// - a state on its own covers the whole state
+// - "State (districts)" covers only those districts
+// - Sabah/Sarawak list divisions after a colon: a division on its own covers all of it,
+//   "Division (districts)" only those districts. So "Miri (Marudi)" does not cover Miri town.
 export function warningCovers(text, region) {
   const body = (text ?? '').split(/\buntil\b/i)[0];
-  return body.split('•').some((seg) => region.states.test(seg) && (!/[(:]/.test(seg) || region.areas.test(seg)));
+  return body.split('•').some((seg) => {
+    if (!region.states.test(seg)) return false;
+    const colon = seg.indexOf(':');
+    if (colon < 0) {
+      const inner = seg.match(/\(([^)]*)\)/);
+      return !inner || named(list(inner[1]), region.districts);
+    }
+    return splitTop(seg.slice(colon + 1)).some((item) => {
+      const [, division, districts] = item.match(/^([^(]+?)\s*(?:\(([^)]*)\))?$/) ?? [];
+      if (!division) return false;
+      return districts ? named(list(districts), region.districts) : named([division], region.divisions);
+    });
+  });
 }
 
 // data.gov.my times are local (UTC+8) without an offset. Drops marine warnings and ones outside our regions.
@@ -193,6 +259,14 @@ export function validateAi(out, news) {
   return { cause, confidence, source: 'AI', summary: String(out?.summary ?? '').slice(0, 300), evidence };
 }
 
+// Which regions to fetch now: watched ones once FAST_MS has passed, the rest once SLOW_MS has.
+export function dueRegions(regions, now, fetchedAt, watchedAt, fast = FAST_MS, slow = SLOW_MS) {
+  return regions.filter((r) => {
+    const watched = now - (watchedAt.get(r.id) ?? -Infinity) < WATCH_MS;
+    return now - (fetchedAt.get(r.id) ?? -Infinity) >= (watched ? fast : slow);
+  });
+}
+
 export function safePath(urlPath) {
   let p;
   try {
@@ -213,27 +287,41 @@ async function get(url, as) {
 
 const FIELDS = '{incidents{geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,events{description,iconCategory},startTime,from,to,length,delay,roadNumbers,lastReportTime}}}';
 
-// One call per region, one after another (gentle on the free tier's rate limit).
+const watchedAt = new Map(); // region id -> last time a page showed it
+const fetchedAt = new Map(); // region id -> last fetch attempt
+let tomtomDay = '';
+let tomtomCalls = 0;
+
+// Fetch the due regions one after another (gentle on the free tier's rate limit); other regions keep their data.
 // A region that fails keeps its previous incidents and is left out of history for this poll.
-async function fetchIncidents(prev) {
-  const incidents = [];
+async function fetchIncidents(due, prev, now) {
   const fresh = [];
-  const errors = {}; // message -> cities, so one bad key isn't repeated 7 times
-  for (const r of TOMTOM_KEY ? REGIONS : []) {
+  const errors = {}; // message -> cities, so one bad key isn't repeated for every city
+  const today = now.toISOString().slice(0, 10); // ponytail: counted per UTC day; TomTom's own reset time isn't documented
+  if (today !== tomtomDay) [tomtomDay, tomtomCalls] = [today, 0];
+  const updated = new Map();
+  for (const r of due) {
+    if (tomtomCalls >= TOMTOM_DAILY_LIMIT) {
+      (errors[`daily limit of ${TOMTOM_DAILY_LIMIT} calls reached, resumes 08:00 Malaysia time`] ??= []).push(r.name);
+      continue;
+    }
+    tomtomCalls++;
+    fetchedAt.set(r.id, now.getTime());
     const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_KEY}&bbox=${r.bbox}`
       + `&fields=${encodeURIComponent(FIELDS)}&language=en-GB&timeValidityFilter=present`;
     try {
       const { incidents: list = [] } = await get(url, 'json');
-      incidents.push(...list.map((f) => ({ ...f.properties, region: r.id, geometry: f.geometry })));
+      updated.set(r.id, list.map((f) => ({ ...f.properties, region: r.id, geometry: f.geometry })));
       fresh.push(r.id);
+      state.regions.find((x) => x.id === r.id).updatedAt = now.toISOString();
     } catch (e) {
-      incidents.push(...prev.filter((i) => i.region === r.id));
       (errors[e.message] ??= []).push(r.name);
     }
   }
   const failed = Object.entries(errors);
   if (failed.length) state.errors.tomtom = failed.map(([msg, names]) => `${names.length === REGIONS.length ? 'all cities' : names.join(', ')}: ${msg}`).join('; ');
-  else delete state.errors.tomtom;
+  else if (due.length) delete state.errors.tomtom;
+  const incidents = [...prev.filter((i) => !updated.has(i.region)), ...[...updated.values()].flat()];
   return { incidents, fresh };
 }
 
@@ -295,7 +383,7 @@ let history = null;
 
 const state = {
   version, updatedAt: null, history: false,
-  regions: REGIONS.map(({ id, name, bbox }) => ({ id, name, bbox: bbox.split(',').map(Number) })),
+  regions: REGIONS.map(({ id, name, group, bbox }) => ({ id, name, group, bbox: bbox.split(',').map(Number), updatedAt: null })),
   traffic: Boolean(TOMTOM_KEY), ai: AI_ON, incidents: [], warnings: [], news: [], errors: {},
 };
 
@@ -312,15 +400,22 @@ async function attempt(name, fn, fallback) {
 }
 
 let polling = false;
+let contextAt = 0; // last news + weather fetch
+
+// Runs every 30 s; only does work when a region or the news/weather is due.
 async function poll() {
   if (polling) return;
   polling = true;
   try {
     const now = new Date();
+    const due = TOMTOM_KEY ? dueRegions(REGIONS, now.getTime(), fetchedAt, watchedAt) : [];
+    const contextDue = now - contextAt >= FAST_MS;
+    if (!due.length && !contextDue) return;
+    if (contextDue) contextAt = now.getTime();
     const [{ incidents, fresh }, warnings, news] = await Promise.all([
-      fetchIncidents(state.incidents),
-      attempt('weather', () => fetchWarnings(now), state.warnings),
-      attempt('news', () => fetchNews(now), state.news),
+      fetchIncidents(due, state.incidents, now),
+      contextDue ? attempt('weather', () => fetchWarnings(now), state.warnings) : state.warnings,
+      contextDue ? attempt('news', () => fetchNews(now), state.news) : state.news,
     ]);
     for (const inc of incidents) {
       inc.label = roadLabel(inc);
@@ -345,7 +440,7 @@ async function poll() {
         history.prune(now.getTime() - HISTORY_DAYS * DAY);
       }, null);
     }
-    console.log(`${now.toISOString()} incidents=${incidents.length} warnings=${warnings.length} news=${news.length}`);
+    console.log(`${now.toISOString()} fetched=${due.map((r) => r.id).join(',') || '-'} incidents=${incidents.length} warnings=${warnings.length} news=${news.length} tomtomCallsToday=${tomtomCalls}`);
   } finally {
     polling = false;
   }
@@ -362,7 +457,12 @@ function send(res, status, body, type = 'text/plain', cache = 'no-store') {
 
 async function handle(req, res) {
   const { pathname, searchParams } = new URL(req.url, 'http://localhost');
-  if (pathname === '/api/state') return send(res, 200, JSON.stringify(state), 'application/json');
+  if (pathname === '/api/state') {
+    // The page says which city it shows, so that city refreshes every few minutes (picked up by the next poll tick).
+    const watch = searchParams.get('watch');
+    if (REGIONS.some((r) => r.id === watch)) watchedAt.set(watch, Date.now());
+    return send(res, 200, JSON.stringify(state), 'application/json');
+  }
 
   if (pathname === '/api/history') {
     if (!history) return send(res, 503, 'History is off');
@@ -402,5 +502,5 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
     if (!res.headersSent) send(res, 500, 'Server error');
   })).listen(port, () => console.log(`Traffic Monitor v${version} on http://localhost:${port}${TOMTOM_KEY ? '' : ' (no TOMTOM_KEY: news + weather only)'}`));
   poll();
-  setInterval(poll, (Number(env.POLL_MINUTES) || 5) * 60e3);
+  setInterval(poll, 30e3);
 }

@@ -1,6 +1,6 @@
 {
   "name": "traffic-monitor",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Real-time traffic jam monitor for Malaysia, with likely causes",
   "license": "AGPL-3.0-only",
   "type": "module",
