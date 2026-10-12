@@ -156,7 +156,7 @@ map.on('load', () => {
 });
 
 const regionInfo = () => state.regions.find((r) => r.id === region);
-const roadName = (i) => [i.roadNumbers?.join('/'), i.from && i.to ? `${i.from} → ${i.to}` : i.from || i.to].filter(Boolean).join(' · ') || 'Unnamed road';
+const roadName = (i) => [i.roadNumbers?.length ? i.label : '', i.from && i.to ? `${i.from} → ${i.to}` : i.from || i.to].filter(Boolean).join(' · ') || 'Unnamed road';
 const delayText = (i) => (i.delay ? `+${Math.round(i.delay / 60)} min` : i.magnitudeOfDelay === 4 ? 'Closed' : '');
 const chip = (c) => `<span class="chip"><span class="dot" style="background:${CAUSE[c]?.[1] ?? '#8d8d8d'}"></span>${esc(CAUSE[c]?.[0] ?? c)}</span>`;
 const evidence = (cause) => cause.evidence.map((u, n) => ` <a href="${safeUrl(u)}" target="_blank" rel="noopener">source ${n + 1}</a>`).join('');
