@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { causeOf, parseRss, isTrafficNews, isPeakHour, relevantWarnings, validateAi, safePath, mentions, roadTokens, roadLabel, ALL_REGIONS } from './server.js';
+import { causeOf, parseRss, isTrafficNews, isPeakHour, relevantWarnings, warningCovers, validateAi, safePath, mentions, roadTokens, roadLabel, ALL_REGIONS } from './server.js';
 import { openHistory } from './history.js';
 
 const SUNDAY_NOON = new Date('2026-10-11T04:00:00Z'); // 12:00 MYT
@@ -32,6 +32,12 @@ assert.equal(causeOf(other, news, [{ ...storm, regions: ['penang'] }], MONDAY_8A
 assert.equal(roadLabel({ roadNumbers: ['E11'] }), 'E11 LDP');
 assert.equal(roadLabel({ roadNumbers: ['E36', 'X9'] }), 'E36 Penang Bridge / X9');
 assert.equal(roadLabel({ from: 'Jalan Ampang' }), 'Jalan Ampang');
+// TomTom gives federal routes as bare numbers, and Asian Highway numbers alongside local ones
+assert.equal(roadLabel({ roadNumbers: ['2', '68'] }), 'FT2 Federal Highway / FT68');
+assert.equal(roadLabel({ roadNumbers: ['AH2', 'E2'] }), 'E2 PLUS');
+assert.equal(roadLabel({ roadNumbers: ['AH2'] }), 'AH2');
+assert.ok(mentions('Accident on Federal Highway', roadTokens({ roadNumbers: ['2'] })));
+assert.ok(!mentions('2 killed in Kedah crash', roadTokens({ roadNumbers: ['2'] })));
 
 // "PLUS" only matches the highway name, not the English word
 assert.ok(mentions('Crash on PLUS near Rawang', roadTokens({ roadNumbers: ['E1'] })));
@@ -64,7 +70,22 @@ const warnings = relevantWarnings([
   w('Thunderstorms Warning', 'Penang (Seberang Perai Utara) • Johor (Segamat)'),
   w('Thunderstorms Warning', 'Selangor', '2026-10-10T00:00:00', '2026-10-10T23:00:00'),
 ], SUNDAY_NOON);
-assert.deepEqual(warnings.map((x) => x.regions), [['klang-valley'], ['penang', 'johor-bahru']]);
+// "Johor (Segamat)" no longer counts for Johor Bahru: Segamat is a different district
+assert.deepEqual(warnings.map((x) => x.regions), [['klang-valley'], ['penang']]);
+
+// Real MET Malaysia text (12 Oct 2026): districts narrow a state down
+const real = 'Thunderstorms, heavy rain and strong winds are expected over the states of Perlis • Kedah (Sik, Baling, Kuala Muda) • '
+  + 'Penang (Seberang Perai Utara, Seberang Perai Tengah and Seberang Perai Selatan) • Perak (Kerian, Larut Matang, Selama, Hulu Perak and Kuala Kangsar) • '
+  + 'Johor (Johor Bahru, Kulai and Pontian) • Sabah: West Coast, Interior (Tambunan, Sipitang), Kudat until 4:00 PM; Monday, 12 October 2026.';
+const covered = ALL_REGIONS.filter((r) => warningCovers(real, r)).map((r) => r.id);
+assert.deepEqual(covered, ['penang', 'johor-bahru', 'kota-kinabalu']); // not Ipoh: Kinta isn't listed
+const kv = ALL_REGIONS[0];
+assert.ok(warningCovers('Thunderstorms over Selangor (Petaling, Gombak) • W.P. Kuala Lumpur', kv));
+assert.ok(warningCovers('Thunderstorms over W.P. Kuala Lumpur • W.P. Putrajaya', kv));
+assert.ok(!warningCovers('Thunderstorms over Selangor (Hulu Selangor and Sabak Bernam)', kv));
+// Text after "until" (the expiry time) is ignored
+assert.ok(!warningCovers('Thunderstorms over Perak (Kerian) until 4:00 PM; Kinta Valley notice', ALL_REGIONS.find((r) => r.id === 'ipoh')));
+assert.ok(warningCovers('Continuous rain over Perak', ALL_REGIONS.find((r) => r.id === 'ipoh'))); // whole state
 
 // Every region fits TomTom's 10,000 km² bbox limit
 for (const r of ALL_REGIONS) {

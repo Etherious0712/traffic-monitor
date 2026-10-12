@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-10-12
+
+### Fixed
+- Weather warnings are matched by district, not just by state. A thunderstorm in Kerian or Hulu Perak no longer explains a jam in Ipoh (Kinta), and "Johor (Segamat)" no longer counts for Johor Bahru.
+- Federal routes, which TomTom sends as bare numbers ("2"), now get their names (FT2 Federal Highway). A number in a headline ("2 killed") is no longer taken to mean that route.
+- Asian Highway numbers (AH2) are hidden when a local route number is also given.
+
+### Changed
+- The incident list uses the same readable road names as history.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added
@@ -32,5 +42,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GET /api/state` JSON endpoint, version shown in the page footer.
 - Self-checks via `npm test`.
 
+[0.2.1]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.1.0

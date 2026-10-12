@@ -15,16 +15,22 @@ const AI_MAX_CALLS_PER_DAY = Number(env.AI_MAX_CALLS_PER_DAY) || 200;
 const HISTORY_DAYS = Number(env.HISTORY_DAYS) || 90;
 const DAY = 864e5;
 
-// bbox = minLon,minLat,maxLon,maxLat (TomTom caps one at 10,000 km²). `states` matches MET Malaysia warning text.
+// bbox = minLon,minLat,maxLon,maxLat (TomTom caps one at 10,000 km²).
+// `states` and `areas` match MET Malaysia warning text: a warning names a state, optionally narrowed to
+// districts or divisions ("Perak (Kerian, Hulu Perak)"); `areas` are the ones inside the bbox.
 // Each region costs one TomTom call per poll: all 7 at POLL_MINUTES=5 is ~2,000 of the 2,500 free calls a day.
 export const ALL_REGIONS = [
-  { id: 'klang-valley', name: 'Klang Valley', bbox: '101.3,2.8,101.9,3.4', states: /Selangor|Kuala Lumpur|Putrajaya/i },
-  { id: 'penang', name: 'Penang', bbox: '100.15,5.2,100.6,5.6', states: /Penang|Pulau Pinang/i },
-  { id: 'johor-bahru', name: 'Johor Bahru', bbox: '103.5,1.35,104.0,1.7', states: /Johor/i },
-  { id: 'ipoh', name: 'Ipoh', bbox: '100.95,4.45,101.2,4.75', states: /Perak/i },
-  { id: 'melaka', name: 'Melaka', bbox: '102.1,2.1,102.4,2.35', states: /Melaka|Malacca/i },
-  { id: 'kuching', name: 'Kuching', bbox: '110.2,1.4,110.5,1.65', states: /Sarawak/i },
-  { id: 'kota-kinabalu', name: 'Kota Kinabalu', bbox: '115.95,5.85,116.2,6.1', states: /Sabah/i },
+  { id: 'klang-valley', name: 'Klang Valley', bbox: '101.3,2.8,101.9,3.4', states: /Selangor|Kuala Lumpur|Putrajaya/i,
+    areas: /Petaling|Gombak|Hulu Langat|Klang|Sepang|Kuala Langat/i },
+  { id: 'penang', name: 'Penang', bbox: '100.15,5.2,100.6,5.6', states: /Penang|Pulau Pinang/i,
+    areas: /Timur Laut|Barat Daya|Seberang Perai/i },
+  { id: 'johor-bahru', name: 'Johor Bahru', bbox: '103.5,1.35,104.0,1.7', states: /Johor/i,
+    areas: /Johor Bahru|Kulai|Pasir Gudang|Iskandar Puteri/i },
+  { id: 'ipoh', name: 'Ipoh', bbox: '100.95,4.45,101.2,4.75', states: /Perak/i, areas: /Kinta|Ipoh/i },
+  { id: 'melaka', name: 'Melaka', bbox: '102.1,2.1,102.4,2.35', states: /Melaka|Malacca/i, areas: /Melaka Tengah|Alor Gajah/i },
+  { id: 'kuching', name: 'Kuching', bbox: '110.2,1.4,110.5,1.65', states: /Sarawak/i, areas: /Kuching|Samarahan/i },
+  { id: 'kota-kinabalu', name: 'Kota Kinabalu', bbox: '115.95,5.85,116.2,6.1', states: /Sabah/i,
+    areas: /West Coast|Kota Kinabalu|Penampang|Putatan/i },
 ];
 const wanted = (env.REGIONS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const REGIONS = wanted.length ? ALL_REGIONS.filter((r) => wanted.includes(r.id)) : ALL_REGIONS;
@@ -77,13 +83,17 @@ const ROUTE_NAMES = {
   FT2: ['Federal Highway', 'Lebuhraya Persekutuan'], FT28: ['MRR2', 'Middle Ring Road 2'],
 };
 
+// TomTom writes federal routes as bare numbers ("2" = Federal Highway). Never match a bare number in news:
+// "2 killed" isn't about route 2.
+const routeId = (n) => (/^\d+$/.test(n) ? `FT${n}` : n);
+
 // ---------- pure logic (tested in check.js) ----------
 
 export function roadTokens(inc) {
   const t = new Set();
-  for (const n of inc.roadNumbers ?? []) {
-    t.add(n);
-    for (const a of ROUTE_NAMES[n] ?? []) t.add(a);
+  for (const id of (inc.roadNumbers ?? []).map(routeId)) {
+    t.add(id);
+    for (const a of ROUTE_NAMES[id] ?? []) t.add(a);
   }
   for (const s of [inc.from, inc.to]) {
     for (const part of (s ?? '').split(/[()/,]/)) if (part.trim().length >= 6) t.add(part.trim());
@@ -92,9 +102,11 @@ export function roadTokens(inc) {
 }
 
 // Label used to group incidents in history: "E11 LDP", or the start location for unnumbered roads.
+// Asian Highway numbers (AH2) are dropped when a local number is also given.
 export function roadLabel(inc) {
-  const nums = (inc.roadNumbers ?? []).map((n) => (ROUTE_NAMES[n] ? `${n} ${ROUTE_NAMES[n][0]}` : n));
-  return nums.join(' / ') || inc.from || '';
+  let ids = (inc.roadNumbers ?? []).map(routeId);
+  if (ids.some((n) => !n.startsWith('AH'))) ids = ids.filter((n) => !n.startsWith('AH'));
+  return ids.map((n) => (ROUTE_NAMES[n] ? `${n} ${ROUTE_NAMES[n][0]}` : n)).join(' / ') || inc.from || '';
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -115,8 +127,14 @@ export function isPeakHour(now) {
   return day >= 1 && day <= 5 && ((h >= 7 && h < 10) || (h >= 17 && h < 20));
 }
 
+// Warning text lists areas separated by "•": "Perlis • Perak (Kerian and Hulu Perak) • Sabah: West Coast, Kudat".
+// A state on its own covers the whole state; with districts/divisions it only covers the ones named.
+export function warningCovers(text, region) {
+  const body = (text ?? '').split(/\buntil\b/i)[0];
+  return body.split('•').some((seg) => region.states.test(seg) && (!/[(:]/.test(seg) || region.areas.test(seg)));
+}
+
 // data.gov.my times are local (UTC+8) without an offset. Drops marine warnings and ones outside our regions.
-// ponytail: matched by state name, so a warning for one Johor district counts for all of Johor Bahru.
 export function relevantWarnings(raw, now, regions = REGIONS) {
   return raw
     .filter((w) => {
@@ -128,7 +146,7 @@ export function relevantWarnings(raw, now, regions = REGIONS) {
       title: w.warning_issue?.title_en ?? w.heading_en,
       text: w.text_en,
       validTo: w.valid_to,
-      regions: regions.filter((r) => r.states.test(w.text_en ?? '')).map((r) => r.id),
+      regions: regions.filter((r) => warningCovers(w.text_en, r)).map((r) => r.id),
     }))
     .filter((w) => w.regions.length);
 }
@@ -305,6 +323,7 @@ async function poll() {
       attempt('news', () => fetchNews(now), state.news),
     ]);
     for (const inc of incidents) {
+      inc.label = roadLabel(inc);
       inc.cause = causeOf(inc, news, warnings, now);
       if (!AI_ON || !['peak_hour', 'unknown'].includes(inc.cause.cause)) continue;
       if (!aiCache.has(inc.id)) {
@@ -321,7 +340,7 @@ async function poll() {
       await attempt('history', () => {
         history.record(now.getTime(), fresh, incidents.filter((i) => fresh.includes(i.region)).map((i) => {
           const [lon, lat] = midpoint(i.geometry);
-          return { id: i.id, region: i.region, road: roadLabel(i), cause: i.cause.cause, source: i.cause.source, summary: i.cause.summary, delay: i.delay, lon, lat };
+          return { id: i.id, region: i.region, road: i.label, cause: i.cause.cause, source: i.cause.source, summary: i.cause.summary, delay: i.delay, lon, lat };
         }));
         history.prune(now.getTime() - HISTORY_DAYS * DAY);
       }, null);
