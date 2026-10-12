@@ -1,8 +1,9 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openHistory } from './history.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -11,10 +12,23 @@ const env = process.env;
 const TOMTOM_KEY = env.TOMTOM_KEY || '';
 const AI_ON = Boolean(env.AI_BASE_URL);
 const AI_MAX_CALLS_PER_DAY = Number(env.AI_MAX_CALLS_PER_DAY) || 200;
+const HISTORY_DAYS = Number(env.HISTORY_DAYS) || 90;
+const DAY = 864e5;
 
-// ponytail: one region. Add more {name, bbox} entries later; TomTom caps a bbox at 10,000 km².
-const REGIONS = [{ name: 'Klang Valley', bbox: '101.3,2.8,101.9,3.4' }];
-const REGION_RE = /Selangor|Kuala Lumpur|Putrajaya/i;
+// bbox = minLon,minLat,maxLon,maxLat (TomTom caps one at 10,000 km²). `states` matches MET Malaysia warning text.
+// Each region costs one TomTom call per poll: all 7 at POLL_MINUTES=5 is ~2,000 of the 2,500 free calls a day.
+export const ALL_REGIONS = [
+  { id: 'klang-valley', name: 'Klang Valley', bbox: '101.3,2.8,101.9,3.4', states: /Selangor|Kuala Lumpur|Putrajaya/i },
+  { id: 'penang', name: 'Penang', bbox: '100.15,5.2,100.6,5.6', states: /Penang|Pulau Pinang/i },
+  { id: 'johor-bahru', name: 'Johor Bahru', bbox: '103.5,1.35,104.0,1.7', states: /Johor/i },
+  { id: 'ipoh', name: 'Ipoh', bbox: '100.95,4.45,101.2,4.75', states: /Perak/i },
+  { id: 'melaka', name: 'Melaka', bbox: '102.1,2.1,102.4,2.35', states: /Melaka|Malacca/i },
+  { id: 'kuching', name: 'Kuching', bbox: '110.2,1.4,110.5,1.65', states: /Sarawak/i },
+  { id: 'kota-kinabalu', name: 'Kota Kinabalu', bbox: '115.95,5.85,116.2,6.1', states: /Sabah/i },
+];
+const wanted = (env.REGIONS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+const REGIONS = wanted.length ? ALL_REGIONS.filter((r) => wanted.includes(r.id)) : ALL_REGIONS;
+if (!REGIONS.length) throw new Error(`REGIONS matched nothing. Use any of: ${ALL_REGIONS.map((r) => r.id).join(', ')}`);
 
 const FEEDS = [
   'https://www.nst.com.my/feed',
@@ -50,13 +64,16 @@ const INCIDENT_WORDS = /accident|crash|nahas|rempuh|terbabas|ditutup|closed|banj
 const ROAD_CONTEXT = /jalan|road|lorong|laluan|kenderaan|vehicle|kereta|\bcar\b|lori|lorry|motosikal|motorcycl|\bbas\b|\bbus\b/i;
 
 // Common names for route numbers, so an E11 incident also matches news that says "LDP".
+// The first name is also used as the label in history. Numbers whose sources disagree are left out.
 const ROUTE_NAMES = {
   E1: ['PLUS', 'NKVE', 'North-South Expressway', 'Lebuhraya Utara-Selatan'],
   E2: ['PLUS', 'North-South Expressway', 'Lebuhraya Utara-Selatan', 'KL-Seremban'],
-  E5: ['KESAS'], E6: ['ELITE'], E8: ['Karak', 'LPT'], E9: ['BESRAYA'], E10: ['NPE'],
-  E11: ['LDP', 'Damansara-Puchong'], E12: ['AKLEH'], E20: ['MEX', 'Maju Expressway'],
-  E23: ['SPRINT'], E26: ['LKSA', 'South Klang Valley'], E33: ['DUKE'], E35: ['GCE', 'Guthrie'],
-  E36: ['DASH'], E37: ['SUKE'], E38: ['SMART'],
+  E3: ['Second Link', 'Linkedua'], E5: ['KESAS'], E6: ['ELITE'], E8: ['Karak', 'LPT'], E9: ['BESRAYA'],
+  E10: ['NPE'], E11: ['LDP', 'Damansara-Puchong'], E12: ['AKLEH'], E13: ['LKSA', 'Kemuning-Shah Alam'],
+  E14: ['EDL', 'Eastern Dispersal Link'], E15: ['BKE', 'Butterworth-Kulim'], E17: ['BORR', 'Butterworth Outer Ring'],
+  E18: ['SILK'], E20: ['MEX', 'Maju Expressway'], E21: ['LEKAS'], E23: ['SPRINT'],
+  E26: ['SKVE', 'South Klang Valley'], E31: ['DASH'], E33: ['DUKE'], E35: ['GCE', 'Guthrie'],
+  E36: ['Penang Bridge', 'Jambatan Pulau Pinang'], E38: ['SMART'],
   FT2: ['Federal Highway', 'Lebuhraya Persekutuan'], FT28: ['MRR2', 'Middle Ring Road 2'],
 };
 
@@ -72,6 +89,12 @@ export function roadTokens(inc) {
     for (const part of (s ?? '').split(/[()/,]/)) if (part.trim().length >= 6) t.add(part.trim());
   }
   return [...t];
+}
+
+// Label used to group incidents in history: "E11 LDP", or the start location for unnumbered roads.
+export function roadLabel(inc) {
+  const nums = (inc.roadNumbers ?? []).map((n) => (ROUTE_NAMES[n] ? `${n} ${ROUTE_NAMES[n][0]}` : n));
+  return nums.join(' / ') || inc.from || '';
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -92,16 +115,22 @@ export function isPeakHour(now) {
   return day >= 1 && day <= 5 && ((h >= 7 && h < 10) || (h >= 17 && h < 20));
 }
 
-// data.gov.my times are local (UTC+8) without an offset. Drops marine warnings.
-export function relevantWarnings(raw, now) {
+// data.gov.my times are local (UTC+8) without an offset. Drops marine warnings and ones outside our regions.
+// ponytail: matched by state name, so a warning for one Johor district counts for all of Johor Bahru.
+export function relevantWarnings(raw, now, regions = REGIONS) {
   return raw
     .filter((w) => {
       const from = new Date(`${w.valid_from}+08:00`);
       const to = new Date(`${w.valid_to}+08:00`);
-      const title = `${w.warning_issue?.title_en} ${w.heading_en}`;
-      return from <= now && now <= to && !/sea|laut/i.test(title) && REGION_RE.test(w.text_en ?? '');
+      return from <= now && now <= to && !/sea|laut/i.test(`${w.warning_issue?.title_en} ${w.heading_en}`);
     })
-    .map((w) => ({ title: w.warning_issue?.title_en ?? w.heading_en, text: w.text_en, validTo: w.valid_to }));
+    .map((w) => ({
+      title: w.warning_issue?.title_en ?? w.heading_en,
+      text: w.text_en,
+      validTo: w.valid_to,
+      regions: regions.filter((r) => r.states.test(w.text_en ?? '')).map((r) => r.id),
+    }))
+    .filter((w) => w.regions.length);
 }
 
 export function causeOf(inc, news, warnings, now) {
@@ -116,7 +145,7 @@ export function causeOf(inc, news, warnings, now) {
     const hit = CAUSE_WORDS.find(([, re]) => re.test(n.title));
     if (hit) return { cause: hit[0], confidence: 'medium', source: 'news', summary: n.title, evidence: [n.link] };
   }
-  const rain = warnings.find((w) => /rain|thunderstorm|storm|flood/i.test(`${w.title} ${w.text}`));
+  const rain = warnings.find((w) => w.regions.includes(inc.region) && /rain|thunderstorm|storm|flood/i.test(`${w.title} ${w.text}`));
   if (rain) return { cause: 'weather', confidence: 'low', source: 'MET Malaysia', summary: rain.title, evidence: [] };
   if (isPeakHour(now)) return { cause: 'peak_hour', confidence: 'low', source: 'rules', summary: 'Usual rush-hour congestion', evidence: [] };
   return { cause: 'unknown', confidence: 'low', source: 'rules', summary: 'No cause found yet', evidence: [] };
@@ -166,17 +195,31 @@ async function get(url, as) {
 
 const FIELDS = '{incidents{geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,events{description,iconCategory},startTime,from,to,length,delay,roadNumbers,lastReportTime}}}';
 
-async function fetchIncidents() {
-  if (!TOMTOM_KEY) return [];
-  const all = [];
-  for (const r of REGIONS) {
+// One call per region, one after another (gentle on the free tier's rate limit).
+// A region that fails keeps its previous incidents and is left out of history for this poll.
+async function fetchIncidents(prev) {
+  const incidents = [];
+  const fresh = [];
+  const errors = {}; // message -> cities, so one bad key isn't repeated 7 times
+  for (const r of TOMTOM_KEY ? REGIONS : []) {
     const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_KEY}&bbox=${r.bbox}`
       + `&fields=${encodeURIComponent(FIELDS)}&language=en-GB&timeValidityFilter=present`;
-    const { incidents = [] } = await get(url, 'json');
-    all.push(...incidents.map((f) => ({ ...f.properties, region: r.name, geometry: f.geometry })));
+    try {
+      const { incidents: list = [] } = await get(url, 'json');
+      incidents.push(...list.map((f) => ({ ...f.properties, region: r.id, geometry: f.geometry })));
+      fresh.push(r.id);
+    } catch (e) {
+      incidents.push(...prev.filter((i) => i.region === r.id));
+      (errors[e.message] ??= []).push(r.name);
+    }
   }
-  return all;
+  const failed = Object.entries(errors);
+  if (failed.length) state.errors.tomtom = failed.map(([msg, names]) => `${names.length === REGIONS.length ? 'all cities' : names.join(', ')}: ${msg}`).join('; ');
+  else delete state.errors.tomtom;
+  return { incidents, fresh };
 }
+
+const midpoint = (g) => (g?.type === 'Point' ? g.coordinates : g?.coordinates?.[Math.floor(g.coordinates.length / 2)]) ?? [];
 
 async function fetchWarnings(now) {
   return relevantWarnings(await get('https://api.data.gov.my/weather/warning?limit=20', 'json'), now);
@@ -209,7 +252,7 @@ async function aiCause(inc, news, warnings, now) {
   const input = {
     incident: { road: inc.roadNumbers, from: inc.from, to: inc.to, delaySeconds: inc.delay, lengthMeters: inc.length, events: inc.events },
     news: news.slice(0, 30).map(({ title, link }) => ({ title, link })),
-    warnings: warnings.map((w) => w.title),
+    warnings: warnings.filter((w) => w.regions.includes(inc.region)).map((w) => w.title),
     localTime: new Date(now.getTime() + 8 * 3600e3).toISOString().replace('Z', '+08:00'),
   };
   const res = await fetch(`${env.AI_BASE_URL.replace(/\/$/, '')}/chat/completions`, {
@@ -230,8 +273,11 @@ async function aiCause(inc, news, warnings, now) {
 
 // ---------- state + polling ----------
 
+let history = null;
+
 const state = {
-  version, updatedAt: null, regions: REGIONS.map((r) => r.name),
+  version, updatedAt: null, history: false,
+  regions: REGIONS.map(({ id, name, bbox }) => ({ id, name, bbox: bbox.split(',').map(Number) })),
   traffic: Boolean(TOMTOM_KEY), ai: AI_ON, incidents: [], warnings: [], news: [], errors: {},
 };
 
@@ -253,8 +299,8 @@ async function poll() {
   polling = true;
   try {
     const now = new Date();
-    const [incidents, warnings, news] = await Promise.all([
-      attempt('tomtom', fetchIncidents, state.incidents),
+    const [{ incidents, fresh }, warnings, news] = await Promise.all([
+      fetchIncidents(state.incidents),
       attempt('weather', () => fetchWarnings(now), state.warnings),
       attempt('news', () => fetchNews(now), state.news),
     ]);
@@ -271,6 +317,15 @@ async function poll() {
     for (const id of aiCache.keys()) if (!live.has(id)) aiCache.delete(id);
     incidents.sort((a, b) => (b.delay ?? 0) - (a.delay ?? 0));
     Object.assign(state, { updatedAt: now.toISOString(), incidents, warnings, news });
+    if (history && fresh.length) {
+      await attempt('history', () => {
+        history.record(now.getTime(), fresh, incidents.filter((i) => fresh.includes(i.region)).map((i) => {
+          const [lon, lat] = midpoint(i.geometry);
+          return { id: i.id, region: i.region, road: roadLabel(i), cause: i.cause.cause, source: i.cause.source, summary: i.cause.summary, delay: i.delay, lon, lat };
+        }));
+        history.prune(now.getTime() - HISTORY_DAYS * DAY);
+      }, null);
+    }
     console.log(`${now.toISOString()} incidents=${incidents.length} warnings=${warnings.length} news=${news.length}`);
   } finally {
     polling = false;
@@ -287,8 +342,16 @@ function send(res, status, body, type = 'text/plain', cache = 'no-store') {
 }
 
 async function handle(req, res) {
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, searchParams } = new URL(req.url, 'http://localhost');
   if (pathname === '/api/state') return send(res, 200, JSON.stringify(state), 'application/json');
+
+  if (pathname === '/api/history') {
+    if (!history) return send(res, 503, 'History is off');
+    const region = searchParams.get('region');
+    if (!REGIONS.some((r) => r.id === region)) return send(res, 400, 'Unknown region');
+    const days = Math.min(Math.max(Math.round(Number(searchParams.get('days')) || 7), 1), HISTORY_DAYS);
+    return send(res, 200, JSON.stringify({ region, days, ...history.query(region, Date.now() - days * DAY) }), 'application/json');
+  }
 
   // Proxy flow tiles so the TomTom key stays on the server.
   // ponytail: no server-side tile cache; each browser view spends the 50k/day tile quota. Add an LRU if shared publicly.
@@ -311,6 +374,10 @@ async function handle(req, res) {
 
 if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   const port = Number(env.PORT) || 3000;
+  const dbFile = path.resolve(ROOT, env.HISTORY_FILE || 'data/history.db');
+  mkdirSync(path.dirname(dbFile), { recursive: true });
+  history = openHistory(dbFile);
+  state.history = true;
   http.createServer((req, res) => handle(req, res).catch((e) => {
     console.error(e);
     if (!res.headersSent) send(res, 500, 'Server error');

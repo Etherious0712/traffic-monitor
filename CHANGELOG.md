@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-12
+
+### Added
+- Six more cities: Penang, Johor Bahru, Ipoh, Melaka, Kuching and Kota Kinabalu, with a city picker. Choose which ones to watch with `REGIONS`.
+- History saved to a local SQLite file (built into Node, no new dependencies), with `HISTORY_DAYS` retention.
+- History panel per city: incidents over time, typical delay by hour of day, causes and most affected roads, for 24 hours, 7 days or 30 days.
+- `GET /api/history` endpoint.
+- Route names for Penang Bridge, BKE, BORR, the Second Link, EDL, SILK, LEKAS, SKVE and DASH.
+
+### Changed
+- Weather warnings are matched to the city they cover, so a storm in Penang no longer explains a jam in KL.
+- Each city is fetched separately: one failing city keeps its last data instead of blanking all of them.
+- Repeated TomTom errors are shown once.
+- Requires Node.js 22.13 or newer.
+
+### Fixed
+- Corrected route numbers: LKSA is E13, SKVE is E26 and DASH is E31. The wrong mappings for E36 and E37 were removed.
+
 ## [0.1.0] - 2026-10-11
 
 ### Added
@@ -14,4 +32,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GET /api/state` JSON endpoint, version shown in the page footer.
 - Self-checks via `npm test`.
 
+[0.2.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.1.0
