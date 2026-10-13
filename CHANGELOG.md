@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - The city on screen refreshes every 5 minutes and every other city every 3 hours (`SLOW_POLL_MINUTES`), so 27 cities fit in the free TomTom quota. The page tells the server which city it shows.
-- Code tidied and formatted with Prettier (`npm run format`). Only `/` serves the page; every other path returns 404.
+- Code tidied and formatted with Prettier (`npm run format`). The page is split by function into `style.css`, `app.js`, `map.js`, `panel.js`, `charts.js` and `util.js`, with comments. The server only serves the files in `public/`; every other path returns 404.
 - Weather warnings for Sabah and Sarawak are matched by division and district: "Miri (Marudi)" doesn't cover Miri town; "Limbang" on its own covers Limbang and Lawas.
 
 ## [0.2.1] - 2026-10-12

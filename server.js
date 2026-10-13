@@ -1,12 +1,16 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openHistory } from './history.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const INDEX = path.join(ROOT, 'public', 'index.html');
+const PUBLIC = path.join(ROOT, 'public');
+// The page's files, listed once at startup: a request can only get one of these, never an arbitrary path.
+const FILES = new Map(readdirSync(PUBLIC).map((f) => [`/${f}`, path.join(PUBLIC, f)]));
+FILES.set('/', path.join(PUBLIC, 'index.html'));
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
 const { version } = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const env = process.env;
 const TOMTOM_KEY = env.TOMTOM_KEY || '';
@@ -602,8 +606,9 @@ async function handle(req, res) {
     return send(res, r.status, Buffer.from(await r.arrayBuffer()), 'image/png', 'public, max-age=60');
   }
 
-  if (pathname === '/') return send(res, 200, await fs.readFile(INDEX), 'text/html; charset=utf-8');
-  send(res, 404, 'Not found');
+  const file = FILES.get(pathname);
+  if (!file) return send(res, 404, 'Not found');
+  send(res, 200, await fs.readFile(file), TYPES[path.extname(file)] ?? 'application/octet-stream');
 }
 
 if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {

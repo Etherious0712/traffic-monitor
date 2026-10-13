@@ -77,10 +77,17 @@ TomTom data isn't stored or redistributed. Each person runs the app with their o
 ## Project layout
 
 ```
-server.js          polling, cause rules, optional AI, API, tile proxy, static files
+server.js          polling, cause rules, optional AI, API, tile proxy, serves public/
 history.js         SQLite history (snapshots per poll, incidents)
-public/index.html  the map page and charts
 check.js           self-checks (npm test)
+public/
+  index.html       page structure
+  style.css        styles (light and dark)
+  app.js           entry point: state, polling, picker and list events
+  map.js           map, traffic-flow layer, incidents on the map, popups
+  panel.js         header and sidebar: picker, warnings, incident list, news
+  charts.js        history charts
+  util.js          shared helpers: cause colours, HTML escaping, text formatting
 ```
 
 `npm run format` formats everything with Prettier (run before committing).
