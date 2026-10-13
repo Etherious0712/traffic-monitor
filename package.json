@@ -10,6 +10,7 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
-    "test": "node check.js"
+    "test": "node check.js",
+    "format": "npx --yes prettier@3.9.9 --write ."
   }
 }

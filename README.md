@@ -54,23 +54,23 @@ Every poll is saved to `data/history.db`, a SQLite file. SQLite is built into No
 
 ### Free AI options (optional)
 
-| Provider | `AI_BASE_URL` | Notes |
-|---|---|---|
-| Ollama (on your machine) | `http://localhost:11434/v1` | Fully free and private; e.g. `AI_MODEL=qwen2.5:7b` |
-| Groq | `https://api.groq.com/openai/v1` | Free tier with rate limits |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | Free tier; Google may use free-tier data to improve its products |
-| OpenRouter | `https://openrouter.ai/api/v1` | Pick a model ending in `:free` |
+| Provider                 | `AI_BASE_URL`                                             | Notes                                                            |
+| ------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------- |
+| Ollama (on your machine) | `http://localhost:11434/v1`                               | Fully free and private; e.g. `AI_MODEL=qwen2.5:7b`               |
+| Groq                     | `https://api.groq.com/openai/v1`                          | Free tier with rate limits                                       |
+| Google Gemini            | `https://generativelanguage.googleapis.com/v1beta/openai` | Free tier; Google may use free-tier data to improve its products |
+| OpenRouter               | `https://openrouter.ai/api/v1`                            | Pick a model ending in `:free`                                   |
 
 `AI_MAX_CALLS_PER_DAY` (default 200) keeps you inside free limits. Each incident is only analysed once.
 
 ## Data sources
 
-| Data | Source | Cost |
-|---|---|---|
-| Traffic flow tiles, incidents | [TomTom Traffic API](https://developer.tomtom.com) | Free tier |
-| Weather warnings | [data.gov.my](https://developer.data.gov.my/realtime-api/weather) (MET Malaysia) | Free |
-| News headlines | RSS from NST, FMT, Malay Mail, Bernama, Harian Metro, Berita Harian, Sinar Harian | Free (titles and links only) |
-| Base map | [OpenFreeMap](https://openfreemap.org) / OpenStreetMap | Free |
+| Data                          | Source                                                                            | Cost                         |
+| ----------------------------- | --------------------------------------------------------------------------------- | ---------------------------- |
+| Traffic flow tiles, incidents | [TomTom Traffic API](https://developer.tomtom.com)                                | Free tier                    |
+| Weather warnings              | [data.gov.my](https://developer.data.gov.my/realtime-api/weather) (MET Malaysia)  | Free                         |
+| News headlines                | RSS from NST, FMT, Malay Mail, Bernama, Harian Metro, Berita Harian, Sinar Harian | Free (titles and links only) |
+| Base map                      | [OpenFreeMap](https://openfreemap.org) / OpenStreetMap                            | Free                         |
 
 TomTom data isn't stored or redistributed. Each person runs the app with their own key.
 
@@ -83,13 +83,14 @@ public/index.html  the map page and charts
 check.js           self-checks (npm test)
 ```
 
+`npm run format` formats everything with Prettier (run before committing).
+
 - `GET /api/state`: everything the live page shows
 - `GET /api/history?region=penang&days=7`: hourly series, delay by hour of day, causes, top roads
 
 ## Limits
 
 - City areas are fixed boxes around each city. Add or resize them in `ALL_REGIONS` in `server.js` (TomTom allows up to 10,000 km² per box).
-- Weather warnings are matched by state, so a warning for one district counts for the whole state.
 - History only records while the app is running, and cities nobody is watching are recorded every 3 hours.
 - Each map view uses TomTom's daily tile quota. That's fine for personal use, but add a tile cache before sharing the app publicly.
 
