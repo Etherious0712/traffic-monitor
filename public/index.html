@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Page structure only. Styles: style.css. Code: app.js (entry), map.js, panel.js, charts.js, util.js. -->
+<!-- Page structure only. Styles: style.css. Code: app.js (entry) and the modules it imports. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -18,10 +18,12 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <!-- Header: city picker and when this city was last updated -->
+    <!-- Header: city picker, Near me (turns location on), settings, and when this city was last updated -->
     <header>
       <h1>Traffic Monitor</h1>
       <select id="region" aria-label="City"></select>
+      <button id="near" aria-pressed="false">📍 Near me</button>
+      <button id="openSettings" aria-label="Settings">⚙</button>
       <span class="meta" id="updated">Loading…</span>
     </header>
 
@@ -35,7 +37,10 @@
         <!-- Missing TomTom key, failed sources -->
         <div id="notices"></div>
 
-        <h2>Jams &amp; incidents</h2>
+        <!-- Share my location (only while Near me is on) -->
+        <div id="share" class="share" hidden></div>
+
+        <h2 id="listTitle">Jams &amp; incidents</h2>
         <ul id="incidents"></ul>
 
         <h2>History</h2>
@@ -48,6 +53,9 @@
           <div id="history"></div>
         </div>
 
+        <h2>My trips</h2>
+        <ul id="trips" class="trips"></ul>
+
         <h2>Traffic news (last 3 h)</h2>
         <ul class="news" id="news"></ul>
 
@@ -57,6 +65,51 @@
         </footer>
       </aside>
     </main>
+
+    <!-- Settings (settings.js). Field names are setting paths. -->
+    <dialog id="settings">
+      <form method="dialog">
+        <h2>Settings</h2>
+        <fieldset>
+          <legend>Alert me with</legend>
+          <label><input type="checkbox" name="notify" /> System notification</label>
+          <label><input type="checkbox" name="sound" /> Sound</label>
+          <label><input type="checkbox" name="vibrate" /> Vibration</label>
+          <label><input type="checkbox" name="voice" /> Voice</label>
+          <label>
+            Voice language
+            <select name="voiceLang">
+              <option value="auto">Same as phone</option>
+              <option value="en">English</option>
+              <option value="ms">Bahasa Melayu</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Alert me about</legend>
+          <label><input type="checkbox" name="types.accident" /> Accidents</label>
+          <label><input type="checkbox" name="types.closure" /> Road closures</label>
+          <label><input type="checkbox" name="types.jam" /> Severe jams</label>
+          <label><input type="checkbox" name="types.works" /> Roadworks and hazards</label>
+        </fieldset>
+        <fieldset>
+          <legend>Distances</legend>
+          <label
+            >Alert within <input type="number" name="alertKm" min="0.5" max="10" step="0.5" required /> km ahead</label
+          >
+          <label
+            >Severe jam: <input type="number" name="jamMinutes" min="1" max="120" required /> min or more delay</label
+          >
+          <label>Near me shows <input type="number" name="nearKm" min="5" max="50" required /> km around you</label>
+        </fieldset>
+        <label><input type="checkbox" name="recordTrips" /> Record my trips while Near me is on</label>
+        <div class="actions">
+          <button value="cancel" formnovalidate>Cancel</button>
+          <button value="save">Save</button>
+        </div>
+      </form>
+    </dialog>
 
     <!-- MapLibre (global `maplibregl`), then our modules -->
     <script

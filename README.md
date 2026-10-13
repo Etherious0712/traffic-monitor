@@ -12,6 +12,7 @@ Covers 27 cities and towns. Free to run: no paid APIs, no npm dependencies.
 - Weather warnings from MET Malaysia
 - Traffic headlines from Malaysian news (last 3 hours)
 - History per city (24 h / 7 days / 30 days): incidents over time, the worst hours of the day, causes, and the most affected roads
+- **Near me**: traffic around you, alerts for what's ahead, your trips, and a link to share your live location
 
 ## How causes are found
 
@@ -52,6 +53,27 @@ When you switch to a city that hasn't been updated recently, it refreshes within
 
 Every poll is saved to `data/history.db`, a SQLite file. SQLite is built into Node, so there's nothing to install. Data older than `HISTORY_DAYS` (default 90) is deleted automatically. The file stays on your machine and is never committed.
 
+### Near me
+
+Press **📍 Near me** to turn on location. While it's on:
+
+- **The map follows you.** The list shows incidents within 20 km, nearest first. Inside a city, that city refreshes every 5 minutes. Between cities, the server also checks a 20 km box around you.
+- **Alerts** for accidents, road closures, severe jams (10 min or more) and roadworks or hazards within 2 km **ahead** of you (±60° of your direction; all around you below 10 km/h).
+  - Each incident alerts once, and again only if it gets worse: it becomes a closure, turns out to be an accident, or TomTom raises its severity.
+  - Alerts come as a system notification, a sound, a vibration and a spoken message in English, Malay or Chinese.
+- **Trips** are recorded automatically: a point every 100 m, and a trip ends after 10 minutes without moving. They're listed under **My trips**. Click one to see its route; ✕ deletes it.
+- **Share my location** gives a link that shows only your position, for 15 min, 1 h, 8 h or until you stop. Turning Near me off ends it.
+
+Everything is adjustable in **⚙ Settings**: alert methods, voice language, distances, which incidents alert, and trip recording.
+
+Privacy:
+
+- Your browser makes a random device id. Only that browser can see its trips and stop its shares; there are no accounts.
+- Your live position is kept in memory only while Near me is on, and is never shown to other users unless you share it.
+- Trips are saved in `data/history.db` until you delete them.
+
+Browsers only allow location on `localhost` or HTTPS, and only while the page is open. Background location comes with the Android app.
+
 ### Free AI options (optional)
 
 | Provider                 | `AI_BASE_URL`                                             | Notes                                                            |
@@ -80,13 +102,21 @@ TomTom data isn't stored or redistributed. Each person runs the app with their o
 server.js          polling, cause rules, optional AI, API, tile proxy, serves public/
 history.js         SQLite history (snapshots per poll, incidents)
 check.js           self-checks (npm test)
+tripstore.js       trip recording (SQLite, per device)
 public/
-  index.html       page structure
+  index.html       page structure, settings dialog
   style.css        styles (light and dark)
-  app.js           entry point: state, polling, picker and list events
-  map.js           map, traffic-flow layer, incidents on the map, popups
+  app.js           entry point: state, polling, Near me, events
+  map.js           map, traffic-flow layer, incidents, your position, trip routes
   panel.js         header and sidebar: picker, warnings, incident list, news
   charts.js        history charts
+  location.js      GPS while Near me is on, reports your position
+  alerts.js        which incidents to alert about, and how (notification, sound, vibration, voice)
+  settings.js      settings dialog, saved in the browser
+  share.js         share my location
+  trips.js         My trips list
+  share.html       the page people see when they open a shared link (viewer.js)
+  geo.js           distances and directions (used by the server too)
   util.js          shared helpers: cause colours, HTML escaping, text formatting
 ```
 
@@ -94,6 +124,9 @@ public/
 
 - `GET /api/state`: everything the live page shows
 - `GET /api/history?region=penang&days=7`: hourly series, delay by hour of day, causes, top roads
+- `POST /api/location`, `DELETE /api/location`: Near me position updates / turned off
+- `POST /api/share`, `GET|DELETE /api/share/<token>`: share links
+- `GET /api/trips`, `GET|DELETE /api/trips/<id>`: My trips (all take `?device=`)
 
 ## Limits
 

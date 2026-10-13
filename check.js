@@ -14,6 +14,10 @@ import {
   ALL_REGIONS,
 } from './server.js';
 import { openHistory } from './history.js';
+import { nearBox } from './server.js';
+import { tripAction, openTrips } from './tripstore.js';
+import { distance, bearing, angleBetween, boxAround, nearestPoint } from './public/geo.js';
+import { alertType, isAhead, findAlerts, message, alertLang } from './public/alerts.js';
 
 const SUNDAY_NOON = new Date('2026-10-11T04:00:00Z'); // 12:00 MYT
 const MONDAY_8AM = new Date('2026-10-12T00:00:00Z'); // 08:00 MYT
@@ -224,5 +228,112 @@ assert.deepEqual(
   validateAi({ cause: 'accident', confidence: 'high', evidence_urls: ['https://x.my/1'] }, news).evidence,
   ['https://x.my/1'],
 );
+
+// ---------- Near me ----------
+
+// Geography: KL Tower -> Petronas Towers is about 1.1 km, roughly east
+const klTower = { lat: 3.1528, lon: 101.7038 };
+const klcc = { lat: 3.1579, lon: 101.7116 };
+assert.ok(Math.abs(distance(klTower, klcc) - 1030) < 50);
+assert.ok(Math.abs(bearing(klTower, klcc) - 57) < 3);
+assert.equal(angleBetween(350, 10), 20);
+const [bw, bs, be, bn] = boxAround(klTower, 20);
+assert.ok(Math.abs(distance({ lat: bs, lon: klTower.lon }, { lat: bn, lon: klTower.lon }) - 40000) < 200);
+assert.ok(bw < klTower.lon && be > klTower.lon);
+assert.equal(
+  Math.round(
+    nearestPoint(klTower, {
+      type: 'LineString',
+      coordinates: [
+        [101.8, 3.2],
+        [101.7116, 3.1579],
+      ],
+    }).distance,
+  ),
+  Math.round(distance(klTower, klcc)),
+);
+
+// Trips: anchor, skip under 100 m, start after 100 m, append, new trip after 10 min without moving 100 m
+const at = (m, t) => ({ lat: 3 + m / 111320, lon: 101, ts: t * 60e3 }); // m metres north, t minutes
+assert.equal(tripAction(null, at(0, 0)), 'anchor');
+assert.equal(tripAction({ ...at(0, 0), tripId: null }, at(50, 1)), 'skip');
+assert.equal(tripAction({ ...at(0, 0), tripId: null }, at(150, 1)), 'start');
+assert.equal(tripAction({ ...at(150, 1), tripId: 7 }, at(300, 2)), 'append');
+assert.equal(tripAction({ ...at(300, 2), tripId: 7 }, at(600, 13)), 'anchor');
+const t = openTrips(':memory:');
+const dev = '00000000-0000-4000-8000-000000000001';
+for (const [m, min] of [
+  [0, 0],
+  [50, 1],
+  [150, 2],
+  [300, 3],
+  [300, 20],
+  [500, 21],
+])
+  t.record(dev, at(m, min));
+// Stopped 17 min at 300 m: the first trip (0 -> 300 m) ended there; moving 200 m from that stop started a second one
+const list = t.list(dev); // newest first
+assert.deepEqual(
+  list.map((x) => x.metres),
+  [200, 300],
+);
+assert.equal(t.route(dev, list[1].id).length, 3);
+assert.equal(t.route('00000000-0000-4000-8000-000000000002', list[1].id), null); // someone else's trip
+assert.equal(t.remove('00000000-0000-4000-8000-000000000002', list[1].id), false);
+assert.equal(t.remove(dev, list[1].id), true);
+assert.equal(t.list(dev).length, 1);
+
+// The extra "near you" box: none inside a city, kept until you move half the radius, then moved
+const box = [100, 0, 101, 1];
+const cities = [{ bbox: box }];
+assert.equal(nearBox(null, { lat: 0.5, lon: 100.5 }, 20, cities), null);
+const b1 = nearBox(null, { lat: 5, lon: 105 }, 20, cities);
+assert.equal(nearBox(b1, { lat: 5.05, lon: 105 }, 20, cities).box, b1.box); // 5.6 km < 10 km
+assert.notEqual(nearBox(b1, { lat: 5.2, lon: 105 }, 20, cities).box, b1.box); // 22 km
+
+// Alerts
+const s = { jamMinutes: 10, alertKm: 2, types: { accident: true, closure: true, jam: true, works: true } };
+const incident = (over) => ({
+  id: 'x',
+  cause: { cause: 'peak_hour' },
+  delay: 900,
+  magnitudeOfDelay: 2,
+  geometry: { type: 'Point', coordinates: [klcc.lon, klcc.lat] },
+  roadNumbers: ['E11'],
+  label: 'E11 LDP',
+  ...over,
+});
+assert.equal(alertType(incident({}), 10), 'jam');
+assert.equal(alertType(incident({ delay: 300 }), 10), null); // 5 min isn't severe
+assert.equal(alertType(incident({ magnitudeOfDelay: 4, delay: 0 }), 10), 'closure');
+assert.equal(alertType(incident({ cause: { cause: 'roadworks' }, delay: 0 }), 10), 'works');
+// Ahead: KLCC is ~57° from the tower. Driving 60 km/h heading 60° -> ahead; heading 240° -> behind; slow -> all around
+const me = (heading, kmh) => ({ ...klTower, heading, speed: kmh / 3.6 });
+assert.ok(isAhead(me(60, 60), klcc));
+assert.ok(!isAhead(me(240, 60), klcc));
+assert.ok(isAhead(me(240, 5), klcc));
+// Once per incident; again only when it gets worse
+const alerted = new Map();
+assert.equal(findAlerts(me(60, 60), [incident({})], s, alerted).length, 1);
+assert.equal(findAlerts(me(60, 60), [incident({ delay: 1500 })], s, alerted).length, 0); // longer delay alone: no
+assert.equal(findAlerts(me(60, 60), [incident({ magnitudeOfDelay: 3 })], s, alerted)[0].again, true); // severity up
+assert.equal(
+  findAlerts(me(60, 60), [incident({ magnitudeOfDelay: 3, cause: { cause: 'accident' } })], s, alerted).length,
+  1,
+);
+assert.equal(findAlerts(me(240, 60), [incident({ id: 'y' })], s, new Map()).length, 0); // behind me
+assert.equal(findAlerts(me(60, 60), [incident({ id: 'z' })], { ...s, alertKm: 0.5 }, new Map()).length, 0); // too far
+assert.equal(
+  findAlerts(me(60, 60), [incident({ id: 'w' })], { ...s, types: { ...s.types, jam: false } }, new Map()).length,
+  0,
+);
+// Messages in the three languages
+const a = { incident: incident({}), type: 'jam', metres: 1234, again: false };
+assert.equal(message(a, 'en'), 'Heavy traffic 1.2 km ahead on E11 LDP');
+assert.equal(message(a, 'ms'), 'Kesesakan teruk 1.2 km di hadapan di E11 LDP');
+assert.equal(message({ ...a, again: true }, 'zh'), '更新：前方 1.2 公里，E11 LDP有严重塞车');
+assert.equal(alertLang({ voiceLang: 'auto' }, 'zh-CN'), 'zh');
+assert.equal(alertLang({ voiceLang: 'auto' }, 'en-MY'), 'en');
+assert.equal(alertLang({ voiceLang: 'ms' }, 'zh-CN'), 'ms');
 
 console.log('all checks passed');
