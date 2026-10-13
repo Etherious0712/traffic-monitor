@@ -3,7 +3,10 @@ import fs from 'node:fs/promises';
 import { readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { openHistory } from './history.js';
+import { openTrips } from './tripstore.js';
+import { inBox, boxAround, distance } from './public/geo.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -379,7 +382,8 @@ async function fetchIncidents(due, prev, now) {
         r.id,
         list.map((f) => ({ ...f.properties, region: r.id, geometry: f.geometry })),
       );
-      state.regions.find((x) => x.id === r.id).updatedAt = now.toISOString();
+      const city = state.regions.find((x) => x.id === r.id);
+      if (city) city.updatedAt = now.toISOString();
     } catch (e) {
       (errors[e.message] ??= []).push(r.name);
     }
@@ -465,6 +469,48 @@ async function aiCause(inc, news, warnings, now) {
   return validateAi(JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)), news);
 }
 
+// ---------- live location ("Near me" on a page) ----------
+// Positions are kept in memory only while a page has Near me on. Trips are saved separately (tripstore.js).
+
+const DEVICE_RE = /^[0-9a-f-]{36}$/; // the random id each browser makes with crypto.randomUUID()
+const devices = new Map(); // device -> { lat, lon, ts, box, center } latest position (+ box when outside all cities)
+const nearIncidents = new Map(); // 'near:<device>' -> incidents in that device's box (only sent to that device)
+const shares = new Map(); // token -> { device, expires } (expires = ms, or null = until stopped)
+let trips = null;
+
+// The extra box to poll around a device that is outside every city, or null when it is inside one.
+// The box only moves once the device is more than half the radius from its centre, so it isn't refetched constantly.
+export function nearBox(prev, p, km, cities = REGIONS) {
+  if (cities.some((r) => inBox(p, r.bbox))) return null;
+  if (prev?.center && distance(prev.center, p) < (km * 1000) / 2) return { box: prev.box, center: prev.center };
+  return { box: boxAround(p, km), center: { lat: p.lat, lon: p.lon } };
+}
+
+// A page reported its position: watch the city it's in, or set up a box around it.
+function updateLocation(device, p, km) {
+  const id = `near:${device}`;
+  const prev = devices.get(device);
+  const near = nearBox(prev, p, km);
+  const city = REGIONS.find((r) => inBox(p, r.bbox));
+  if (city) watchedAt.set(city.id, p.ts);
+  if (near) watchedAt.set(id, p.ts);
+  if (near && near.box !== prev?.box) fetchedAt.delete(id); // new box: fetch it on the next tick
+  if (!near) nearIncidents.delete(id);
+  devices.set(device, { ...p, ...near });
+  return city?.id ?? null;
+}
+
+// Near me turned off (or the page went away): forget the position and end its shares.
+function forgetDevice(device) {
+  devices.delete(device);
+  nearIncidents.delete(`near:${device}`);
+  for (const [token, sh] of shares) if (sh.device === device) shares.delete(token);
+}
+
+// Boxes to poll for devices outside every city (they count as watched, so every 5 minutes).
+const nearRegions = () =>
+  [...devices].filter(([, d]) => d.box).map(([device, d]) => ({ id: `near:${device}`, name: 'Near you', bbox: d.box }));
+
 // ---------- state + polling ----------
 
 let history = null;
@@ -503,12 +549,13 @@ async function poll() {
   polling = true;
   try {
     const now = new Date();
-    const due = TOMTOM_KEY ? dueRegions(REGIONS, now.getTime(), fetchedAt, watchedAt) : [];
+    for (const [device, d] of devices) if (now - d.ts > WATCH_MS) forgetDevice(device); // page closed without saying so
+    const due = TOMTOM_KEY ? dueRegions([...REGIONS, ...nearRegions()], now.getTime(), fetchedAt, watchedAt) : [];
     const contextDue = now - contextAt >= FAST_MS;
     if (!due.length && !contextDue) return;
     if (contextDue) contextAt = now.getTime();
     const [{ incidents, fresh }, warnings, news] = await Promise.all([
-      fetchIncidents(due, state.incidents, now),
+      fetchIncidents(due, [...state.incidents, ...[...nearIncidents.values()].flat()], now),
       contextDue ? attempt('weather', () => fetchWarnings(now), state.warnings) : state.warnings,
       contextDue ? attempt('news', () => fetchNews(now), state.news) : state.news,
     ]);
@@ -526,16 +573,28 @@ async function poll() {
     const live = new Set(incidents.map((i) => i.id));
     for (const id of aiCache.keys()) if (!live.has(id)) aiCache.delete(id);
     incidents.sort((a, b) => (b.delay ?? 0) - (a.delay ?? 0));
-    Object.assign(state, { updatedAt: now.toISOString(), incidents, warnings, news });
-    if (history && fresh.length) {
+    // Incidents from "near you" boxes go only to their device, never into the shared state.
+    const isNear = (i) => i.region.startsWith('near:');
+    nearIncidents.clear();
+    for (const i of incidents.filter(isNear)) {
+      if (devices.has(i.region.slice(5))) nearIncidents.set(i.region, [...(nearIncidents.get(i.region) ?? []), i]);
+    }
+    const cityFresh = fresh.filter((id) => !id.startsWith('near:'));
+    Object.assign(state, {
+      updatedAt: now.toISOString(),
+      incidents: incidents.filter((i) => !isNear(i)),
+      warnings,
+      news,
+    });
+    if (history && cityFresh.length) {
       await attempt(
         'history',
         () => {
           history.record(
             now.getTime(),
-            fresh,
+            cityFresh,
             incidents
-              .filter((i) => fresh.includes(i.region))
+              .filter((i) => cityFresh.includes(i.region))
               .map((i) => {
                 const [lon, lat] = i.at;
                 return {
@@ -570,6 +629,27 @@ function send(res, status, body, type = 'text/plain', cache = 'no-store') {
   res.writeHead(status, { 'content-type': type, 'cache-control': cache });
   res.end(body);
 }
+const json = (res, data, status = 200) => send(res, status, JSON.stringify(data), 'application/json');
+
+// Read a small JSON request body (positions and share requests are tiny).
+async function readJson(req) {
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 10_000) throw new Error('body too large');
+  }
+  return JSON.parse(body || '{}');
+}
+
+const isNum = (v, lo, hi) => typeof v === 'number' && v >= lo && v <= hi;
+const SHARE_MINUTES = [15, 60, 480, null]; // 15 min, 1 h, 8 h, until stopped
+
+// A share, or undefined once it has expired (expired shares are deleted when looked up).
+function liveShare(token) {
+  const sh = shares.get(token);
+  if (sh?.expires && sh.expires < Date.now()) shares.delete(token);
+  return shares.get(token);
+}
 
 async function handle(req, res) {
   const { pathname, searchParams } = new URL(req.url, 'http://localhost');
@@ -591,6 +671,66 @@ async function handle(req, res) {
       JSON.stringify({ region, days, ...history.query(region, Date.now() - days * DAY) }),
       'application/json',
     );
+  }
+
+  // ---------- Near me: position updates, sharing, trips ----------
+  // The device id the page generated is the only key to that device's data. It travels in the x-device header
+  // (or the JSON body), never in the URL, so it doesn't end up in proxy or access logs.
+  const deviceHeader = req.headers['x-device'] ?? '';
+
+  // POST { device, lat, lon, km, record } -> { city, incidents near you }. DELETE (x-device): Near me turned off.
+  if (pathname === '/api/location') {
+    if (req.method === 'DELETE') {
+      if (DEVICE_RE.test(deviceHeader)) forgetDevice(deviceHeader);
+      return send(res, 204, '');
+    }
+    const b = await readJson(req).catch(() => null);
+    if (!DEVICE_RE.test(b?.device ?? '') || !isNum(b.lat, -90, 90) || !isNum(b.lon, -180, 180)) {
+      return send(res, 400, 'Bad position');
+    }
+    const p = { lat: b.lat, lon: b.lon, ts: Date.now() };
+    const city = updateLocation(b.device, p, isNum(b.km, 1, 50) ? b.km : 20);
+    if (trips && b.record !== false) trips.record(b.device, p);
+    return json(res, { city, incidents: nearIncidents.get(`near:${b.device}`) ?? [] });
+  }
+
+  // POST { device, minutes } -> { token, expires }: start sharing this device's live position.
+  if (pathname === '/api/share' && req.method === 'POST') {
+    const b = await readJson(req).catch(() => null);
+    if (!DEVICE_RE.test(b?.device ?? '') || !SHARE_MINUTES.includes(b.minutes ?? null)) {
+      return send(res, 400, 'Bad share');
+    }
+    if (!devices.has(b.device)) return send(res, 409, 'Turn on Near me first');
+    const token = randomBytes(12).toString('base64url');
+    const expires = b.minutes ? Date.now() + b.minutes * MIN : null;
+    shares.set(token, { device: b.device, expires });
+    return json(res, { token, expires });
+  }
+
+  // GET /api/share/<token>: the shared position (anyone with the link). DELETE (x-device): stop it (owner only).
+  const share = pathname.match(/^\/api\/share\/([\w-]{16})$/);
+  if (share) {
+    const sh = liveShare(share[1]);
+    if (!sh) return send(res, 404, 'This share has ended');
+    if (req.method === 'DELETE') {
+      if (deviceHeader !== sh.device) return send(res, 403, 'Not your share');
+      shares.delete(share[1]);
+      return send(res, 204, '');
+    }
+    const d = devices.get(sh.device);
+    return json(res, { lat: d?.lat ?? null, lon: d?.lon ?? null, at: d?.ts ?? null, expires: sh.expires });
+  }
+
+  // GET /api/trips: list. GET /api/trips/<id>: route. DELETE /api/trips/<id>: delete. All need x-device.
+  const trip = pathname.match(/^\/api\/trips(?:\/(\d+))?$/);
+  if (trip) {
+    const device = deviceHeader;
+    if (!trips || !DEVICE_RE.test(device)) return send(res, 400, 'Bad device');
+    if (!trip[1]) return json(res, trips.list(device));
+    const id = Number(trip[1]);
+    if (req.method === 'DELETE') return send(res, trips.remove(device, id) ? 204 : 404, '');
+    const route = trips.route(device, id);
+    return route ? json(res, route) : send(res, 404, 'Not found');
   }
 
   // Proxy flow tiles so the TomTom key stays on the server.
@@ -616,6 +756,7 @@ if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   const dbFile = path.resolve(ROOT, env.HISTORY_FILE || 'data/history.db');
   mkdirSync(path.dirname(dbFile), { recursive: true });
   history = openHistory(dbFile);
+  trips = openTrips(dbFile);
   state.history = true;
   http
     .createServer((req, res) =>

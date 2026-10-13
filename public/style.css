@@ -326,6 +326,78 @@ footer {
   white-space: nowrap;
 }
 
+/* ---------- Near me: share bar and trips ---------- */
+
+.share {
+  margin: 10px 16px 0;
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.trip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.trip .link {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 8px 0;
+}
+.trip .del {
+  background: none;
+  border: 0;
+  color: var(--muted);
+}
+.trips > .src {
+  padding: 0 16px;
+}
+
+/* ---------- Settings dialog ---------- */
+
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+dialog fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0 0 10px;
+  display: grid;
+  gap: 6px;
+}
+dialog input[type='number'] {
+  width: 4.5em;
+}
+dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------- Shared-location page: the map fills the window ---------- */
+
+main.full {
+  grid-template-columns: 1fr;
+}
+main.full #map {
+  min-height: calc(100vh - 52px);
+}
+
 /* ---------- Phones: map on top, sidebar below ---------- */
 
 @media (max-width: 760px) {

@@ -1,4 +1,5 @@
-// The map: OpenFreeMap base map, TomTom traffic-flow colours, and incidents drawn as lines/points coloured by cause.
+// The map: OpenFreeMap base map, TomTom traffic-flow colours, incidents drawn as lines/points coloured by cause,
+// your position while Near me is on, and a recorded trip's route.
 // `maplibregl` is the global from the MapLibre script tag in index.html.
 import { CAUSE, esc, chip, roadName, delayText, evidence } from './util.js';
 
@@ -14,6 +15,8 @@ map.addControl(new maplibregl.NavigationControl(), 'top-right');
 let ready = false; // base map style loaded, our layers added
 let incidents = []; // latest incidents, for popups
 let traffic = false; // the server has a TomTom key, so flow tiles exist
+let followPaused = 0; // don't re-centre on me until this time (after looking at an incident or moving the map)
+map.on('dragstart', () => (followPaused = Date.now() + 30e3));
 
 // MapLibre "match" expression: cause id -> colour.
 const colorExpr = ['match', ['get', 'cause'], ...Object.entries(CAUSE).flatMap(([k, [, c]]) => [k, c]), '#8d8d8d'];
@@ -40,9 +43,21 @@ map.on('load', () => {
     map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'));
     map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''));
   }
+  // A recorded trip's route, and your position (blue dot), drawn above the incidents
+  map.addSource('route', { type: 'geojson', data: emptyLine });
+  map.addLayer({ id: 'route', type: 'line', source: 'route', paint: { 'line-color': '#2a78d6', 'line-width': 4 } });
+  map.addSource('me', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'me',
+    type: 'circle',
+    source: 'me',
+    paint: { 'circle-color': '#2a78d6', 'circle-radius': 8, 'circle-stroke-width': 3, 'circle-stroke-color': '#fff' },
+  });
   ready = true;
   draw();
 });
+
+const emptyLine = { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } };
 
 // Draw the latest data. The TomTom flow layer is added the first time traffic data is available,
 // underneath the incident lines.
@@ -93,6 +108,7 @@ function showPopup(id, lngLat) {
 // Fly to an incident (from the sidebar list) and open its popup. `at` is its midpoint, sent by the server.
 export function focusIncident(i) {
   if (!i?.at.length) return;
+  followPaused = Date.now() + 30e3;
   map.flyTo({ center: i.at, zoom: 14 });
   showPopup(i.id, i.at);
 }
@@ -108,5 +124,32 @@ export function fitRegion(r) {
       [e, n],
     ],
     { padding: 20, duration: 800 },
+  );
+}
+
+// Your position as a blue dot, with the map following you (paused for 30 s after you move the map). null hides it.
+export function showMe(p) {
+  if (!ready) return;
+  const features = p ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] } }] : [];
+  map.getSource('me').setData({ type: 'FeatureCollection', features });
+  if (p && Date.now() > followPaused)
+    map.easeTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 13), duration: 500 });
+}
+
+// Draw a trip's route ([lon, lat] pairs) and zoom to it. null clears it.
+export function showRoute(coords) {
+  if (!ready) return;
+  map
+    .getSource('route')
+    .setData(coords ? { ...emptyLine, geometry: { type: 'LineString', coordinates: coords } } : emptyLine);
+  if (!coords?.length) return;
+  const lons = coords.map((c) => c[0]);
+  const lats = coords.map((c) => c[1]);
+  map.fitBounds(
+    [
+      [Math.min(...lons), Math.min(...lats)],
+      [Math.max(...lons), Math.max(...lats)],
+    ],
+    { padding: 40, duration: 800, maxZoom: 15 },
   );
 }

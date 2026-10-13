@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-13
+
+### Added
+
+- **Near me** button: turns on location; the map follows you and the list shows incidents within 20 km, nearest first. When you're between cities, the server also checks a 20 km box around you, and only your page sees it.
+- **Alerts** for accidents, closures, severe jams and roadworks or hazards within 2 km ahead of you (±60° of your heading; all around below 10 km/h). Each incident alerts once, and again if it becomes a closure, turns out to be an accident, or its severity rises. Alerts come as a system notification, a sound, a vibration and voice (English, Malay or Chinese).
+- **Settings** dialog (⚙): alert methods, voice language, alert distance, severe-jam threshold, Near me radius, which incidents alert, and trip recording.
+- **My trips**: trips are recorded automatically while Near me is on (a point every 100 m; a trip ends after 10 minutes without moving), kept until you delete them, and drawn on the map. Only the device that recorded them can see them.
+- **Share my location**: a link that shows only your position, for 15 min, 1 h, 8 h or until you stop. Turning Near me off ends it.
+
 ## [0.3.0] - 2026-10-12
 
 ### Added
@@ -65,6 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GET /api/state` JSON endpoint, version shown in the page footer.
 - Self-checks via `npm test`.
 
+[0.4.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Etherious0712/traffic-monitor/releases/tag/v0.2.0

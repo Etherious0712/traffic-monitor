@@ -1,13 +1,14 @@
 // The header and sidebar: city picker, update time, weather banner, notices, incident list and news.
 // Everything is redrawn from the latest /api/state each time (s = state, region = id of the city on screen).
+// near = null in city mode, or { km, list: [{ incident, metres }] } while Near me is on.
 import { $, esc, safeUrl, chip, roadName, delayText, evidence } from './util.js';
 
-export function renderPanel(s, region) {
+export function renderPanel(s, region, near) {
   renderPicker(s, region);
   renderUpdated(s, region);
   renderWarnings(s, region);
   renderNotices(s);
-  renderIncidents(s, region);
+  renderIncidents(s, region, near);
   renderNews(s);
   $('ver').textContent = `v${s.version} · `;
 }
@@ -57,18 +58,26 @@ function renderNotices(s) {
   $('notices').innerHTML = notes.map(([c, t]) => `<p class="notice ${c}">${esc(t)}</p>`).join('');
 }
 
-// Incidents in this city, worst delay first (the server sorts them). Clicking one flies the map to it.
-function renderIncidents(s, region) {
-  const mine = s.incidents.filter((i) => i.region === region);
-  const row = (i) => `
+// City mode: incidents in this city, worst delay first (the server sorts them).
+// Near me: incidents within the radius, nearest first, with their distance. Clicking one flies the map to it.
+function renderIncidents(s, region, near) {
+  $('listTitle').textContent = near ? `Near me (${near.km} km)` : 'Jams & incidents';
+  const items = near ? near.list : s.incidents.filter((i) => i.region === region).map((incident) => ({ incident }));
+  const away = (m) => (m == null ? '' : `<span>${(m / 1000).toFixed(1)} km away</span>`);
+  const row = ({ incident: i, metres }) => `
     <li class="inc" tabindex="0" data-id="${esc(i.id)}">
       <div class="road">${esc(roadName(i))}</div>
-      <div class="row">${chip(i.cause.cause)}<span>${esc(delayText(i))}</span><span>${esc(i.cause.source)} · ${esc(i.cause.confidence)}</span></div>
+      <div class="row">${chip(i.cause.cause)}${away(metres)}<span>${esc(delayText(i))}</span><span>${esc(i.cause.source)} · ${esc(i.cause.confidence)}</span></div>
       <div class="summary">${esc(i.cause.summary)}${evidence(i.cause)}</div>
     </li>`;
-  $('incidents').innerHTML = mine.length
-    ? mine.map(row).join('')
-    : `<li class="notice">${s.traffic ? 'No incidents right now.' : ''}</li>`;
+  const none = near
+    ? near.waiting
+      ? 'Finding your location…'
+      : 'Nothing near you right now.'
+    : 'No incidents right now.';
+  $('incidents').innerHTML = items.length
+    ? items.map(row).join('')
+    : `<li class="notice">${s.traffic ? none : ''}</li>`;
 }
 
 // Traffic headlines from Malaysian news in the last 3 hours (all cities).
