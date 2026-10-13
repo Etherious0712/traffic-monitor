@@ -43,7 +43,7 @@ $('share').addEventListener('click', async (e) => {
     b.textContent = 'Copied';
     return;
   } else if ('stop' in b.dataset) {
-    await fetch(`/api/share/${active.token}?device=${device}`, { method: 'DELETE' });
+    await fetch(`/api/share/${active.token}`, { method: 'DELETE', headers: { 'x-device': device } });
     active = null;
   }
   renderShare(true);

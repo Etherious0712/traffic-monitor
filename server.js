@@ -674,13 +674,14 @@ async function handle(req, res) {
   }
 
   // ---------- Near me: position updates, sharing, trips ----------
-  // Every call carries the device id the page generated; it is the only key to that device's data.
+  // The device id the page generated is the only key to that device's data. It travels in the x-device header
+  // (or the JSON body), never in the URL, so it doesn't end up in proxy or access logs.
+  const deviceHeader = req.headers['x-device'] ?? '';
 
-  // POST { device, lat, lon, km, record } -> { city, incidents near you }. DELETE ?device= : Near me turned off.
+  // POST { device, lat, lon, km, record } -> { city, incidents near you }. DELETE (x-device): Near me turned off.
   if (pathname === '/api/location') {
     if (req.method === 'DELETE') {
-      const device = searchParams.get('device');
-      if (DEVICE_RE.test(device ?? '')) forgetDevice(device);
+      if (DEVICE_RE.test(deviceHeader)) forgetDevice(deviceHeader);
       return send(res, 204, '');
     }
     const b = await readJson(req).catch(() => null);
@@ -706,13 +707,13 @@ async function handle(req, res) {
     return json(res, { token, expires });
   }
 
-  // GET /api/share/<token>: the shared position (anyone with the link). DELETE ?device= : stop it (owner only).
+  // GET /api/share/<token>: the shared position (anyone with the link). DELETE (x-device): stop it (owner only).
   const share = pathname.match(/^\/api\/share\/([\w-]{16})$/);
   if (share) {
     const sh = liveShare(share[1]);
     if (!sh) return send(res, 404, 'This share has ended');
     if (req.method === 'DELETE') {
-      if (searchParams.get('device') !== sh.device) return send(res, 403, 'Not your share');
+      if (deviceHeader !== sh.device) return send(res, 403, 'Not your share');
       shares.delete(share[1]);
       return send(res, 204, '');
     }
@@ -720,10 +721,10 @@ async function handle(req, res) {
     return json(res, { lat: d?.lat ?? null, lon: d?.lon ?? null, at: d?.ts ?? null, expires: sh.expires });
   }
 
-  // GET /api/trips?device= : list. GET /api/trips/<id>?device= : route. DELETE /api/trips/<id>?device= : delete.
+  // GET /api/trips: list. GET /api/trips/<id>: route. DELETE /api/trips/<id>: delete. All need x-device.
   const trip = pathname.match(/^\/api\/trips(?:\/(\d+))?$/);
   if (trip) {
-    const device = searchParams.get('device') ?? '';
+    const device = deviceHeader;
     if (!trips || !DEVICE_RE.test(device)) return send(res, 400, 'Bad device');
     if (!trip[1]) return json(res, trips.list(device));
     const id = Number(trip[1]);

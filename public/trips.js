@@ -3,7 +3,8 @@ import { $ } from './util.js';
 import { device } from './location.js';
 import { showRoute } from './map.js';
 
-const api = (path = '', method = 'GET') => fetch(`/api/trips${path}?device=${device}`, { method });
+// The device id goes in a header, not the URL, so it never shows up in logs.
+const api = (path = '', method = 'GET') => fetch(`/api/trips${path}`, { method, headers: { 'x-device': device } });
 
 // Reload and draw the list.
 export async function loadTrips() {

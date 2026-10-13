@@ -126,7 +126,7 @@ public/
 - `GET /api/history?region=penang&days=7`: hourly series, delay by hour of day, causes, top roads
 - `POST /api/location`, `DELETE /api/location`: Near me position updates / turned off
 - `POST /api/share`, `GET|DELETE /api/share/<token>`: share links
-- `GET /api/trips`, `GET|DELETE /api/trips/<id>`: My trips (all take `?device=`)
+- `GET /api/trips`, `GET|DELETE /api/trips/<id>`: My trips (all need the `x-device` header)
 
 ## Limits
 

@@ -38,7 +38,7 @@ export function startLocation(onFix, onError) {
 export function stopLocation() {
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
   watchId = last = reported = null;
-  fetch(`/api/location?device=${device}`, { method: 'DELETE' }).catch(() => {});
+  fetch('/api/location', { method: 'DELETE', headers: { 'x-device': device } }).catch(() => {});
 }
 
 // Send the position to the server, at most every 15 s unless you moved 100 m.
